@@ -184,10 +184,12 @@ async function loadDash(){
     sb.from('usinas').select('*').order('nome'),
     sb.from('ciclos').select('*').eq('mes_referencia',mesRef),
     sb.from('faturas_abrape').select('valor,status'),
-    sb.from('boletos').select('valor,status')
+    sb.from('boletos').select('valor,status'),
+    sb.from('solicitacoes').select('id,tipo,usinas(nome)').eq('status','pendente')
   ]);
   for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
   var usinas=q[0].data;S.usinas=usinas;
+  var fila=q[4].data;
   var cmap={};q[1].data.forEach(function(c){cmap[c.usina_id]=c;});
   var fab=q[2].data.filter(function(f){return f.status==='emitida'||f.status==='vencida';});
   var vab=fab.reduce(function(a,f){return a+Number(f.valor||0);},0);
@@ -199,6 +201,7 @@ async function loadDash(){
   h+='<div class="kpi"><div class="l">Fechamentos do mes</div><div class="v">'+concl+' / '+usinas.filter(function(u){return u.ativo;}).length+'</div><div class="d">ciclos concluidos</div></div>';
   h+='<div class="kpi"><div class="l">Faturas em aberto</div><div class="v">'+fab.length+'</div><div class="d">'+money(vab)+'</div></div>';
   h+='<div class="kpi"><div class="l">Boletos vencidos</div><div class="v">'+bven+'</div></div>';
+  h+='<div class="kpi"'+(fila.length?' style="border-color:var(--gold)"':'')+'><div class="l">Fila do Claude</div><div class="v">'+fila.length+'</div><div class="d">'+(fila.length?'solicitacoes aguardando &mdash; diga &quot;roda a fila&quot; ao Claude':'nenhuma solicitacao pendente')+'</div></div>';
   h+='</div><div class="grid">';
   usinas.forEach(function(u){
     var c=cmap[u.id];
@@ -224,10 +227,11 @@ async function loadUsina(){
     sb.from('geracao_mensal').select('*').eq('usina_id',id).order('mes_geracao',{ascending:false}),
     sb.from('documentos').select('*, ciclos(mes_referencia)').eq('usina_id',id).order('criado_em',{ascending:false}),
     sb.from('clientes').select('id,nome').order('nome'),
-    sb.from('compensacoes').select('*, ucs(numero_uc,clientes(nome)), ciclos!inner(usina_id)').eq('ciclos.usina_id',id)
+    sb.from('compensacoes').select('*, ucs(numero_uc,clientes(nome)), ciclos!inner(usina_id)').eq('ciclos.usina_id',id),
+    sb.from('solicitacoes').select('*').eq('usina_id',id).order('criado_em',{ascending:false})
   ]);
   for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
-  S.u={usina:q[0].data,ciclos:q[1].data,rateios:q[2].data,cond:q[3].data,ger:q[4].data,docs:q[5].data,comp:q[7].data};
+  S.u={usina:q[0].data,ciclos:q[1].data,rateios:q[2].data,cond:q[3].data,ger:q[4].data,docs:q[5].data,comp:q[7].data,sol:q[8].data};
   S.clientes=q[6].data;
   var fr=await sb.from('faturas_abrape').select('*, clientes(nome), ciclos!inner(usina_id,mes_referencia)').eq('ciclos.usina_id',id).order('criado_em',{ascending:false});
   if(fr.error)throw fr.error;
@@ -269,6 +273,36 @@ function renderUsinaTab(){
         h+='<h2 style="margin:0">Ciclo '+mesLbl(cs.mes_referencia)+'</h2>'+chip(STCICLO,cs.status);
         h+='<span style="color:var(--muted);font-size:12.5px">Geracao de '+mesLbl(cs.mes_geracao)+'</span>';
         h+='<button class="btn sec mini" style="margin-left:auto" onclick="A.verCiclo(null)">Fechar detalhe</button></div>';
+        var sols=(S.u.sol||[]).filter(function(s){return s.ciclo_id===cs.id;});
+        var TIPOSOL={processar:'Processar o ciclo',faturar:'Aprovar e faturar',enviar:'Enviar relatorios'};
+        var acao=null, hint='';
+        if(cs.status==='aberto'||cs.status==='documentos'){acao='processar';hint='O Claude extrai os dados dos documentos enviados, roda o ledger por UC e deixa o ciclo Conferido para revisao.';}
+        else if(cs.status==='conferido'){acao='faturar';hint='O Claude gera as faturas (serie geral), os relatorios individuais, o demonstrativo ABRAPE, o dashboard da usina e emite os boletos no Inter.';}
+        else if(cs.status==='faturado'){acao='enviar';hint='O Claude envia os relatorios e boletos por e-mail aos clientes (e investidor, se houver).';}
+        h+='<div style="background:var(--surface2);border-radius:10px;padding:12px 14px;margin-bottom:14px">';
+        h+='<div style="font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:8px">Acoes do ciclo (fila do Claude)</div>';
+        if(acao){
+          var jaPede=sols.filter(function(s){return s.tipo===acao&&s.status==='pendente';})[0];
+          if(jaPede){
+            h+='<span class="chip warn">'+TIPOSOL[acao]+': solicitado em '+dt(jaPede.criado_em)+'</span> ';
+            h+='<button class="btn sec mini" onclick="A.cancelarSol(&quot;'+jaPede.id+'&quot;)">Cancelar solicitacao</button>';
+            h+='<p class="note" style="margin-top:8px">Aguardando o Claude &mdash; diga &quot;roda a fila&quot; a ele para executar agora.</p>';
+          } else {
+            h+='<button class="btn" onclick="A.solicitar(&quot;'+cs.id+'&quot;,&quot;'+acao+'&quot;)">'+TIPOSOL[acao]+'</button>';
+            h+='<p class="note" style="margin-top:8px">'+hint+'</p>';
+          }
+        } else {
+          h+='<p class="note">Ciclo concluido &mdash; nenhuma acao pendente.</p>';
+        }
+        if(sols.length){
+          h+='<div class="tblwrap" style="margin-top:10px"><table><tr><th>Solicitacao</th><th>Status</th><th>Por</th><th>Quando</th></tr>';
+          sols.forEach(function(s){
+            var stc=s.status==='pendente'?'warn':s.status==='concluida'?'ok':s.status==='em_execucao'?'info':'';
+            h+='<tr><td>'+TIPOSOL[s.tipo]+'</td><td><span class="chip '+stc+'">'+esc(s.status)+'</span></td><td>'+esc(s.solicitado_por||'')+'</td><td>'+dt(s.criado_em)+'</td></tr>';
+          });
+          h+='</table></div>';
+        }
+        h+='</div>';
         var comps=(S.u.comp||[]).filter(function(x){return x.ciclo_id===cs.id;});
         h+='<h2>Fechamento por UC</h2>';
         if(!comps.length)h+='<p class="empty" style="padding:6px 0">Sem apuracao registrada neste ciclo.</p>';
@@ -508,6 +542,19 @@ window.A={
   sair:async function(){await sb.auth.signOut();},
   utab:function(t){S.usinaTab=t;S.cicloSel=null;renderUsina();},
   verCiclo:function(id){S.cicloSel=id;renderUsina();if(id)window.scrollTo({top:0,behavior:'smooth'});},
+  solicitar:async function(cicloId,tipo){
+    var lbl={processar:'processar o ciclo',faturar:'aprovar e faturar o ciclo',enviar:'enviar os relatorios do ciclo'}[tipo];
+    if(!window.confirm('Registrar solicitacao para o Claude '+lbl+'?'))return;
+    try{
+      var r=await sb.from('solicitacoes').insert({usina_id:S.usinaId,ciclo_id:cicloId,tipo:tipo,solicitado_por:S.perfil.email});
+      if(r.error)throw r.error;
+      toast('Solicitacao registrada na fila do Claude.');loadUsina().catch(fail);
+    }catch(e){fail(e);}
+  },
+  cancelarSol:async function(id){
+    if(!window.confirm('Cancelar esta solicitacao?'))return;
+    try{var r=await sb.from('solicitacoes').update({status:'cancelada',concluido_em:new Date().toISOString()}).eq('id',id);if(r.error)throw r.error;toast('Solicitacao cancelada.');loadUsina().catch(fail);}catch(e){fail(e);}
+  },
   ctab:function(t){S.cliTab=t;renderClientes();},
   abrirCiclo:async function(){
     try{
