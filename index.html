@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mesa de Comando ABRAPE</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap">
+<style>
+:root{
+  --bg:#F6F4EE; --surface:#FFFFFF; --surface2:#EFEBE0; --ink:#1C2B3A; --muted:#66727F;
+  --line:#E0DACB; --gold:#B07C10; --goldink:#8A5F06; --teal:#0E7C7B;
+  --ok:#2E7D4F; --warn:#A06F0A; --bad:#B4452F; --info:#3B6EA5;
+  --chip-ok:#E3F0E8; --chip-warn:#F6ECD4; --chip-bad:#F7E3DE; --chip-info:#E2ECF6; --chip-mut:#ECEAE2;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#0F161D; --surface:#18222C; --surface2:#141D26; --ink:#E8E3D6; --muted:#93A0AD;
+  --line:#2A3743; --gold:#E3B34C; --goldink:#E3B34C; --teal:#43B5B2;
+  --ok:#5BBF8A; --warn:#E3B34C; --bad:#E07B62; --info:#7FA8D0;
+  --chip-ok:#1B3327; --chip-warn:#372B12; --chip-bad:#3A211B; --chip-info:#1D2C3C; --chip-mut:#232E39;
+}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font-family:'Archivo',system-ui,sans-serif;font-size:15px;line-height:1.5}
+h1,h2,h3{margin:0;text-wrap:balance}
+button{font-family:inherit}
+a{color:var(--teal)}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px}
+.topbar{background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:env(safe-area-inset-top,0px);z-index:20}
+.topbar .wrap{display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding-block:10px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand .bt{line-height:1.15}
+.brand .bt b{display:block;font-weight:800;letter-spacing:.08em;font-size:13px}
+.brand .bt span{display:block;font-size:11px;color:var(--muted);letter-spacing:.04em}
+nav{display:flex;gap:4px;flex-wrap:wrap}
+nav button{background:none;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;color:var(--muted);font-weight:600;font-size:14px}
+nav button.on{background:var(--surface2);color:var(--ink)}
+nav button:hover{color:var(--ink)}
+.userchip{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
+.userchip b{color:var(--ink);font-weight:600}
+.userchip button{border:1px solid var(--line);background:none;color:var(--muted);border-radius:8px;padding:5px 10px;cursor:pointer}
+main{padding-block:26px 60px}
+.pagehead{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+.pagehead h1{font-size:22px;font-weight:700}
+.pagehead .sub{color:var(--muted);font-size:13px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:22px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.kpi .l{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.kpi .v{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px}
+.kpi .d{font-size:12px;color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;cursor:pointer;display:flex;flex-direction:column;gap:8px;transition:border-color .15s}
+.card:hover{border-color:var(--gold)}
+.card h3{font-size:16px;font-weight:700}
+.card .meta{font-size:12.5px;color:var(--muted)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:99px;background:var(--chip-mut);color:var(--muted);letter-spacing:.02em}
+.chip.ok{background:var(--chip-ok);color:var(--ok)}
+.chip.warn{background:var(--chip-warn);color:var(--warn)}
+.chip.bad{background:var(--chip-bad);color:var(--bad)}
+.chip.info{background:var(--chip-info);color:var(--info)}
+.chip.gold{background:var(--chip-warn);color:var(--goldink)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+.panel h2{font-size:15px;font-weight:700;margin-bottom:12px}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin-bottom:18px}
+.tabs button{background:none;border:none;border-bottom:2px solid transparent;padding:9px 13px;cursor:pointer;color:var(--muted);font-weight:600;font-size:14px;margin-bottom:-1px}
+.tabs button.on{color:var(--goldink);border-bottom-color:var(--gold)}
+.tblwrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+.btn{background:var(--gold);color:#fff;border:none;border-radius:9px;padding:9px 16px;font-weight:700;font-size:13.5px;cursor:pointer}
+@media (prefers-color-scheme: dark){.btn{color:#14100a}}
+.btn:hover{filter:brightness(1.06)}
+.btn.sec{background:none;color:var(--ink);border:1px solid var(--line);font-weight:600}
+.btn.mini{padding:5px 10px;font-size:12.5px;border-radius:7px}
+.btn.danger{background:none;border:1px solid var(--line);color:var(--bad)}
+.frm{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.frm .full{grid-column:1/-1}
+.fld label{display:block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:4px}
+.fld input,.fld select,.fld textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font-family:inherit;font-size:14px}
+.fld textarea{min-height:70px;resize:vertical}
+select.inline{padding:4px 6px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--ink);font-size:12.5px}
+.empty{color:var(--muted);font-size:13.5px;padding:14px 0}
+.note{font-size:12.5px;color:var(--muted);margin-top:10px}
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:10px;font-size:14px;font-weight:600;z-index:99;max-width:90vw}
+#toast.err{background:var(--bad);color:#fff}
+#modalbg{position:fixed;inset:0;background:rgba(10,14,18,.45);z-index:50;display:flex;align-items:center;justify-content:center;padding:20px}
+#modal{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px;max-width:640px;width:100%;max-height:85vh;overflow:auto}
+#modal h2{font-size:16px;margin-bottom:14px}
+.login{min-height:92vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.logincard{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:30px;max-width:400px;width:100%}
+.logincard .brand{justify-content:center;margin-bottom:6px}
+.logincard p.tag{text-align:center;color:var(--muted);font-size:13px;margin:4px 0 18px}
+.logincard .fld{margin-bottom:12px}
+.switch{display:flex;gap:4px;background:var(--surface2);border-radius:9px;padding:3px;margin-bottom:16px}
+.switch button{flex:1;border:none;background:none;padding:7px;border-radius:7px;cursor:pointer;font-weight:600;color:var(--muted);font-size:13.5px}
+.switch button.on{background:var(--surface);color:var(--ink)}
+.actbar{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-bottom:14px}
+.mono{font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+var SB_URL='https://puepmnyffpfjttxmwfjt.supabase.co';
+var SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB1ZXBtbnlmZnBmanR0eG13Zmp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk2NTMzMzksImV4cCI6MjEwNTIyOTMzOX0.6waSiEVZE0Fm2QraExivstM8qjzK7NGQ6698wmzHxjw';
+var sb=window.supabase.createClient(SB_URL,SB_KEY);
+var S={perfil:null,view:'dash',usinaId:null,usinaTab:'ciclos',cliTab:'clientes',usinas:[],clientes:[]};
+var MESES=['Janeiro','Fevereiro','Marco','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+var TIPODOC={conta_geradora:'Conta da UC geradora',demonstrativo_energisa:'Demonstrativo Energisa/CPFL',conta_uc_recebedora:'Conta de UC recebedora',demonstrativo_abrape:'Demonstrativo ABRAPE',demonstrativo_geracao:'Demonstrativo de Geracao',relatorio_cliente:'Relatorio de cliente',relatorio_investidor:'Relatorio de investidor',boleto:'Boleto',rateio_planilha:'Planilha de rateio',outro:'Outro'};
+var STCICLO={aberto:['Aberto','warn'],documentos:['Documentos carregados','info'],conferido:['Conferido','info'],faturado:['Faturado','gold'],concluido:['Concluido','ok']};
+var STFAT={emitida:['Em aberto','warn'],paga:['Paga','ok'],vencida:['Vencida','bad'],cancelada:['Cancelada','']};
+var STBOL={aberto:['Em aberto','warn'],pago:['Pago','ok'],vencido:['Vencido','bad'],expirado:['Expirado',''],cancelado:['Cancelado','']};
+function esc(s){if(s===null||s===undefined)return '';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function money(n){if(n===null||n===undefined||n==='')return '&mdash;';return Number(n).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});}
+function kwh(n){if(n===null||n===undefined||n==='')return '&mdash;';return Number(n).toLocaleString('pt-BR')+' kWh';}
+function mesLbl(d){if(!d)return '&mdash;';var p=String(d).split('-');return MESES[Number(p[1])-1]+'/'+p[0];}
+function dt(d){if(!d)return '&mdash;';var p=String(d).slice(0,10).split('-');return p[2]+'/'+p[1]+'/'+p[0];}
+function chip(map,k){var c=map[k]||[k,''];return '<span class="chip '+c[1]+'">'+esc(c[0])+'</span>';}
+function el(id){return document.getElementById(id);}
+function val(id){var e=el(id);return e?e.value.trim():'';}
+function toast(m,err){var t=el('toast');if(t)t.remove();var d=document.createElement('div');d.id='toast';if(err)d.className='err';d.textContent=m;document.body.appendChild(d);setTimeout(function(){d.remove();},err?6000:3200);}
+function fail(e){console.error(e);toast((e&&e.message)?e.message:'Erro inesperado',true);}
+function mark(){return '<svg width="38" height="38" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="9" fill="var(--gold)"/><g stroke="var(--gold)" stroke-width="2.6" stroke-linecap="round"><line x1="20" y1="7" x2="20" y2="3"/><line x1="20" y1="33" x2="20" y2="37"/><line x1="7" y1="20" x2="3" y2="20"/><line x1="33" y1="20" x2="37" y2="20"/><line x1="10.8" y1="10.8" x2="8" y2="8"/><line x1="29.2" y1="10.8" x2="32" y2="8"/><line x1="10.8" y1="29.2" x2="8" y2="32"/><line x1="29.2" y1="29.2" x2="32" y2="32"/></g></svg>';}
+function brand(){return '<div class="brand">'+mark()+'<div class="bt"><b>ABRAPE SOLAR</b><span>Mesa de Comando</span></div></div>';}
+
+// ---------- AUTH ----------
+function showLogin(msg){
+  el('app').innerHTML='<div class="login"><div class="logincard">'+brand()+
+  '<p class="tag">Gestao das usinas de geracao compartilhada</p>'+
+  '<div class="switch"><button id="sw-in" class="on" onclick="A.swLogin(true)">Entrar</button><button id="sw-up" onclick="A.swLogin(false)">Primeiro acesso</button></div>'+
+  '<div id="f-in"><div class="fld"><label>E-mail</label><input id="li-email" type="email" autocomplete="username"></div>'+
+  '<div class="fld"><label>Senha</label><input id="li-senha" type="password" autocomplete="current-password"></div>'+
+  '<button class="btn" style="width:100%" onclick="A.login()">Entrar</button></div>'+
+  '<div id="f-up" hidden><div class="fld"><label>E-mail autorizado</label><input id="su-email" type="email"></div>'+
+  '<div class="fld"><label>Criar senha (min. 8)</label><input id="su-senha" type="password" autocomplete="new-password"></div>'+
+  '<div class="fld"><label>Repetir senha</label><input id="su-senha2" type="password" autocomplete="new-password"></div>'+
+  '<button class="btn" style="width:100%" onclick="A.signup()">Criar acesso</button>'+
+  '<p class="note">Somente os e-mails autorizados da ABRAPE conseguem acessar os dados.</p></div>'+
+  (msg?'<p class="note" style="text-align:center">'+esc(msg)+'</p>':'')+
+  '</div></div>';
+  var s=el('li-senha');if(s)s.addEventListener('keydown',function(ev){if(ev.key==='Enter')A.login();});
+}
+function showNoAccess(email){
+  el('app').innerHTML='<div class="login"><div class="logincard">'+brand()+
+  '<p class="tag">Acesso nao autorizado</p><p style="font-size:14px">O e-mail <b>'+esc(email)+'</b> nao esta na lista de usuarios autorizados da ABRAPE SOLAR. Fale com o administrador.</p>'+
+  '<button class="btn sec" style="width:100%;margin-top:14px" onclick="A.sair()">Sair</button></div></div>';
+}
+async function enter(){
+  var r=await sb.rpc('minha_autorizacao');
+  if(r.error){fail(r.error);return;}
+  if(!r.data||!r.data.length){var u=await sb.auth.getUser();showNoAccess(u.data&&u.data.user?u.data.user.email:'');return;}
+  S.perfil=r.data[0];
+  renderShell();go('dash');
+}
+function renderShell(){
+  el('app').innerHTML='<header class="topbar"><div class="wrap">'+brand()+
+  '<nav><button id="nv-dash" onclick="go(&quot;dash&quot;)">Usinas</button>'+
+  '<button id="nv-cli" onclick="go(&quot;cli&quot;)">Clientes</button>'+
+  '<button id="nv-cob" onclick="go(&quot;cob&quot;)">Cobranca</button>'+
+  '<button id="nv-adm" onclick="go(&quot;adm&quot;)">Administracao</button></nav>'+
+  '<div class="userchip"><span><b>'+esc(S.perfil.nome)+'</b> &middot; '+(S.perfil.papel==='admin'?'Admin':'Operacao')+'</span><button onclick="A.sair()">Sair</button></div>'+
+  '</div></header><main class="wrap" id="main"></main>';
+}
+function go(v,arg){
+  S.view=v;
+  ['dash','cli','cob','adm'].forEach(function(k){var b=el('nv-'+k);if(b)b.classList.toggle('on',k===v||(v==='usina'&&k==='dash'));});
+  el('main').innerHTML='<p class="empty">Carregando&hellip;</p>';
+  if(v==='dash')loadDash().catch(fail);
+  if(v==='usina'){S.usinaId=arg||S.usinaId;S.usinaTab='ciclos';loadUsina().catch(fail);}
+  if(v==='cli')loadClientes().catch(fail);
+  if(v==='cob')loadCobranca().catch(fail);
+  if(v==='adm')loadAdmin().catch(fail);
+}
+
+// ---------- DASHBOARD ----------
+async function loadDash(){
+  var hoje=new Date();
+  var mesRef=hoje.getFullYear()+'-'+String(hoje.getMonth()+1).padStart(2,'0')+'-01';
+  var q=await Promise.all([
+    sb.from('usinas').select('*').order('nome'),
+    sb.from('ciclos').select('*').eq('mes_referencia',mesRef),
+    sb.from('faturas_abrape').select('valor,status'),
+    sb.from('boletos').select('valor,status')
+  ]);
+  for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
+  var usinas=q[0].data;S.usinas=usinas;
+  var cmap={};q[1].data.forEach(function(c){cmap[c.usina_id]=c;});
+  var fab=q[2].data.filter(function(f){return f.status==='emitida'||f.status==='vencida';});
+  var vab=fab.reduce(function(a,f){return a+Number(f.valor||0);},0);
+  var bven=q[3].data.filter(function(b){return b.status==='vencido';}).length;
+  var concl=q[1].data.filter(function(c){return c.status==='concluido';}).length;
+  var h='<div class="pagehead"><h1>Painel das Usinas</h1><span class="sub">Ciclo de '+MESES[hoje.getMonth()]+'/'+hoje.getFullYear()+'</span></div>';
+  h+='<div class="kpis">';
+  h+='<div class="kpi"><div class="l">Usinas ativas</div><div class="v">'+usinas.filter(function(u){return u.ativo;}).length+'</div></div>';
+  h+='<div class="kpi"><div class="l">Fechamentos do mes</div><div class="v">'+concl+' / '+usinas.filter(function(u){return u.ativo;}).length+'</div><div class="d">ciclos concluidos</div></div>';
+  h+='<div class="kpi"><div class="l">Faturas em aberto</div><div class="v">'+fab.length+'</div><div class="d">'+money(vab)+'</div></div>';
+  h+='<div class="kpi"><div class="l">Boletos vencidos</div><div class="v">'+bven+'</div></div>';
+  h+='</div><div class="grid">';
+  usinas.forEach(function(u){
+    var c=cmap[u.id];
+    h+='<div class="card" onclick="go(&quot;usina&quot;,&quot;'+u.id+'&quot;)"><h3>'+esc(u.nome)+'</h3>';
+    h+='<div class="meta">'+esc(u.distribuidora)+(u.cidade?' &middot; '+esc(u.cidade)+'/'+esc(u.uf):'')+'</div>';
+    h+='<div class="chips"><span class="chip '+(u.modelo==='autoconsumo'?'info':'')+'">'+(u.modelo==='autoconsumo'?'Autoconsumo':'Distribuicao')+'</span>';
+    if(u.tem_investidor)h+='<span class="chip gold">Investidor</span>';
+    h+=c?chip(STCICLO,c.status):'<span class="chip">Sem ciclo no mes</span>';
+    h+='</div></div>';
+  });
+  h+='</div>';
+  el('main').innerHTML=h;
+}
+
+// ---------- USINA ----------
+async function loadUsina(){
+  var id=S.usinaId;
+  var q=await Promise.all([
+    sb.from('usinas').select('*').eq('id',id).single(),
+    sb.from('ciclos').select('*').eq('usina_id',id).order('mes_referencia',{ascending:false}),
+    sb.from('rateios').select('*, ucs(id,numero_uc,endereco,cidade,tipo,multi_fonte,clientes(id,nome))').eq('usina_id',id),
+    sb.from('condicoes_comerciais').select('*').eq('usina_id',id),
+    sb.from('geracao_mensal').select('*').eq('usina_id',id).order('mes_geracao',{ascending:false}),
+    sb.from('documentos').select('*, ciclos(mes_referencia)').eq('usina_id',id).order('criado_em',{ascending:false}),
+    sb.from('clientes').select('id,nome').order('nome')
+  ]);
+  for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
+  S.u={usina:q[0].data,ciclos:q[1].data,rateios:q[2].data,cond:q[3].data,ger:q[4].data,docs:q[5].data};
+  S.clientes=q[6].data;
+  var fr=await sb.from('faturas_abrape').select('*, clientes(nome), ciclos!inner(usina_id,mes_referencia)').eq('ciclos.usina_id',id).order('criado_em',{ascending:false});
+  if(fr.error)throw fr.error;
+  S.u.faturas=fr.data;
+  renderUsina();
+}
+function renderUsina(){
+  var u=S.u.usina;
+  var h='<div class="pagehead"><button class="btn sec mini" onclick="go(&quot;dash&quot;)">&larr; Painel</button><h1>'+esc(u.nome)+'</h1>';
+  h+='<div class="chips"><span class="chip '+(u.modelo==='autoconsumo'?'info':'')+'">'+(u.modelo==='autoconsumo'?'Autoconsumo':'Distribuicao')+'</span>';
+  if(u.tem_investidor)h+='<span class="chip gold">Investidor</span>';
+  h+='</div></div>';
+  h+='<div class="tabs">';
+  [['ciclos','Ciclos'],['cadastro','Cadastro'],['ucs','UCs & Rateio'],['docs','Documentos'],['fat','Faturas']].forEach(function(t){
+    h+='<button class="'+(S.usinaTab===t[0]?'on':'')+'" onclick="A.utab(&quot;'+t[0]+'&quot;)">'+t[1]+'</button>';
+  });
+  h+='</div><div id="utab"></div>';
+  el('main').innerHTML=h;
+  renderUsinaTab();
+}
+function renderUsinaTab(){
+  var t=S.usinaTab,u=S.u.usina,h='';
+  if(t==='ciclos'){
+    h='<div class="panel"><h2>Abrir novo ciclo</h2><div class="actbar">';
+    h+='<div class="fld"><label>Mes de referencia (fatura)</label><input type="month" id="nc-mes"></div>';
+    h+='<button class="btn" onclick="A.abrirCiclo()">Abrir ciclo</button></div>';
+    h+='<p class="note">O mes de geracao correspondente e registrado automaticamente como o mes anterior (regra padrao; ajuste depois se a usina tiver outra defasagem).</p></div>';
+    h+='<div class="panel"><h2>Ciclos de fechamento</h2>';
+    if(!S.u.ciclos.length)h+='<p class="empty">Nenhum ciclo aberto ainda. Abra o primeiro ciclo para comecar a subir documentos.</p>';
+    else{h+='<div class="tblwrap"><table><tr><th>Mes fatura</th><th>Mes geracao</th><th>Status</th><th>Observacoes</th></tr>';
+      S.u.ciclos.forEach(function(c){
+        h+='<tr><td><b>'+mesLbl(c.mes_referencia)+'</b></td><td>'+mesLbl(c.mes_geracao)+'</td><td><select class="inline" onchange="A.stCiclo(&quot;'+c.id+'&quot;,this.value)">';
+        Object.keys(STCICLO).forEach(function(k){h+='<option value="'+k+'"'+(c.status===k?' selected':'')+'>'+STCICLO[k][0]+'</option>';});
+        h+='</select></td><td>'+esc(c.observacoes||'')+'</td></tr>';
+      });h+='</table></div>';}
+    h+='</div>';
+    h+='<div class="panel"><h2>Geracao mensal</h2>';
+    if(!S.u.ger.length)h+='<p class="empty">Sem registros de geracao ainda &mdash; serao gravados no processamento de cada ciclo (ou na migracao do historico).</p>';
+    else{h+='<div class="tblwrap"><table><tr><th>Mes</th><th class="num">kWh bruto</th><th class="num">Comp. geradora</th><th class="num">kWh liquido</th><th class="num">Previsto</th><th class="num">Eficiencia</th><th class="num">Saldo geradora</th></tr>';
+      S.u.ger.forEach(function(g){h+='<tr><td>'+mesLbl(g.mes_geracao)+'</td><td class="num">'+kwh(g.kwh_bruto)+'</td><td class="num">'+kwh(g.kwh_compensado_geradora)+'</td><td class="num">'+kwh(g.kwh_liquido)+'</td><td class="num">'+kwh(g.kwh_previsto)+'</td><td class="num">'+(g.eficiencia_pct!==null&&g.eficiencia_pct!==undefined?Number(g.eficiencia_pct).toLocaleString('pt-BR')+'%':'&mdash;')+'</td><td class="num">'+kwh(g.saldo_geradora)+'</td></tr>';});
+      h+='</table></div>';}
+    h+='</div>';
+  }
+  if(t==='cadastro'){
+    h='<div class="panel"><h2>Cadastro da usina</h2><div class="frm">';
+    h+='<div class="fld"><label>Nome</label><input id="ed-nome" value="'+esc(u.nome)+'"></div>';
+    h+='<div class="fld"><label>Modelo</label><select id="ed-modelo"><option value="distribuicao"'+(u.modelo==='distribuicao'?' selected':'')+'>Distribuicao multi-UC</option><option value="autoconsumo"'+(u.modelo==='autoconsumo'?' selected':'')+'>Autoconsumo local</option></select></div>';
+    h+='<div class="fld"><label>Distribuidora</label><input id="ed-dist" value="'+esc(u.distribuidora)+'"></div>';
+    h+='<div class="fld"><label>Cidade</label><input id="ed-cidade" value="'+esc(u.cidade||'')+'"></div>';
+    h+='<div class="fld"><label>UF</label><input id="ed-uf" value="'+esc(u.uf||'')+'"></div>';
+    h+='<div class="fld"><label>Potencia (kWp)</label><input id="ed-pot" type="number" step="0.01" value="'+(u.potencia_kwp||'')+'"></div>';
+    h+='<div class="fld"><label>Modulos</label><input id="ed-mod" type="number" value="'+(u.num_modulos||'')+'"></div>';
+    h+='<div class="fld"><label>Inversores</label><input id="ed-inv" value="'+esc(u.inversores||'')+'"></div>';
+    h+='<div class="fld"><label>Titularidade</label><input id="ed-tit" value="'+esc(u.titularidade||'')+'"></div>';
+    h+='<div class="fld"><label>Investidor externo</label><select id="ed-invst"><option value="n"'+(!u.tem_investidor?' selected':'')+'>Nao</option><option value="s"'+(u.tem_investidor?' selected':'')+'>Sim</option></select></div>';
+    h+='<div class="fld"><label>Ativa</label><select id="ed-ativo"><option value="s"'+(u.ativo?' selected':'')+'>Sim</option><option value="n"'+(!u.ativo?' selected':'')+'>Nao</option></select></div>';
+    h+='<div class="fld full"><label>Observacoes</label><textarea id="ed-obs">'+esc(u.observacoes||'')+'</textarea></div>';
+    h+='</div><div style="margin-top:14px"><button class="btn" onclick="A.salvarUsina()">Salvar cadastro</button></div></div>';
+  }
+  if(t==='ucs'){
+    h='<div class="panel"><h2>UCs recebedoras e rateio</h2>';
+    if(!S.u.rateios.length)h+='<p class="empty">Nenhuma UC vinculada ainda.</p>';
+    else{h+='<div class="tblwrap"><table><tr><th>UC</th><th>Cliente</th><th class="num">Rateio</th><th>Vigencia</th><th>Condicao comercial</th><th></th></tr>';
+      S.u.rateios.forEach(function(r){
+        var uc=r.ucs||{};var cond=S.u.cond.filter(function(c){return c.uc_id===r.uc_id&&!c.vigencia_fim;})[0];
+        var cs=cond?(cond.modelo==='desconto'?'Desconto '+Number(cond.percentual_desconto).toLocaleString('pt-BR')+'%':'Tarifa fixa '+money(cond.tarifa_fixa)+'/kWh'):'&mdash;';
+        h+='<tr><td><b class="mono">'+esc(uc.numero_uc)+'</b>'+(uc.multi_fonte?' <span class="chip warn">multi-fonte</span>':'')+'<br><span style="color:var(--muted);font-size:12px">'+esc(uc.cidade||'')+'</span></td>';
+        h+='<td>'+esc(uc.clientes?uc.clientes.nome:'&mdash;')+'</td><td class="num">'+Number(r.percentual).toLocaleString('pt-BR')+'%</td>';
+        h+='<td>'+dt(r.vigencia_inicio)+(r.vigencia_fim?' a '+dt(r.vigencia_fim):'')+'</td><td>'+cs+'</td>';
+        h+='<td><button class="btn danger mini" onclick="A.delRateio(&quot;'+r.id+'&quot;)">Encerrar</button></td></tr>';
+      });h+='</table></div>';}
+    h+='</div>';
+    h+='<div class="panel"><h2>Vincular UC recebedora</h2><div class="frm">';
+    h+='<div class="fld"><label>Numero da UC</label><input id="vu-num" placeholder="ex.: 381.416.053-33"></div>';
+    h+='<div class="fld"><label>Cliente</label><select id="vu-cli"><option value="">&mdash;</option>';
+    S.clientes.forEach(function(c){h+='<option value="'+c.id+'">'+esc(c.nome)+'</option>';});
+    h+='</select></div>';
+    h+='<div class="fld"><label>Rateio (%)</label><input id="vu-pct" type="number" step="0.01"></div>';
+    h+='<div class="fld"><label>Inicio da vigencia</label><input id="vu-vig" type="date"></div>';
+    h+='<div class="fld"><label>Condicao comercial</label><select id="vu-modelo"><option value="">Definir depois</option><option value="desconto">Desconto (%)</option><option value="tarifa_fixa">Tarifa fixa (R$/kWh)</option></select></div>';
+    h+='<div class="fld"><label>Valor da condicao</label><input id="vu-valor" type="number" step="0.0001" placeholder="ex.: 10 ou 0.47"></div>';
+    h+='<div class="fld"><label>Cidade da UC</label><input id="vu-cidade"></div>';
+    h+='<div class="fld"><label>Multi-fonte?</label><select id="vu-multi"><option value="n">Nao</option><option value="s">Sim (recebe de mais de uma usina)</option></select></div>';
+    h+='</div><div style="margin-top:14px"><button class="btn" onclick="A.vincularUC()">Vincular UC</button></div></div>';
+    var g=S.u.usina.uc_geradora_id;
+    h+='<div class="panel"><h2>UC geradora</h2><p style="font-size:14px" id="ger-atual">'+(g?'Vinculada.':'Ainda nao informada.')+'</p>';
+    h+='<div class="actbar"><div class="fld"><label>Numero da UC geradora</label><input id="ug-num"></div><button class="btn sec" onclick="A.setGeradora()">Definir</button></div></div>';
+  }
+  if(t==='docs'){
+    h='<div class="panel"><h2>Enviar documento</h2><div class="frm">';
+    h+='<div class="fld"><label>Ciclo</label><select id="up-ciclo"><option value="">Geral (sem ciclo)</option>';
+    S.u.ciclos.forEach(function(c){h+='<option value="'+c.id+'">'+mesLbl(c.mes_referencia)+'</option>';});
+    h+='</select></div>';
+    h+='<div class="fld"><label>Tipo</label><select id="up-tipo">';
+    Object.keys(TIPODOC).forEach(function(k){h+='<option value="'+k+'">'+TIPODOC[k]+'</option>';});
+    h+='</select></div>';
+    h+='<div class="fld full"><label>Arquivos (PDF, planilhas&hellip;)</label><input id="up-file" type="file" multiple></div>';
+    h+='</div><div style="margin-top:14px"><button class="btn" onclick="A.uploadDoc()">Enviar</button></div></div>';
+    h+='<div class="panel"><h2>Documentos da usina</h2>';
+    if(!S.u.docs.length)h+='<p class="empty">Nenhum documento ainda. Suba as contas de geracao, demonstrativos e faturas das UCs recebedoras por ciclo.</p>';
+    else{h+='<div class="tblwrap"><table><tr><th>Arquivo</th><th>Tipo</th><th>Ciclo</th><th>Enviado</th><th></th></tr>';
+      S.u.docs.forEach(function(d){
+        h+='<tr><td style="word-break:break-all">'+esc(d.nome_arquivo)+'</td><td>'+(TIPODOC[d.tipo]||esc(d.tipo))+'</td><td>'+(d.ciclos?mesLbl(d.ciclos.mes_referencia):'Geral')+'</td><td>'+dt(d.criado_em)+'<br><span style="color:var(--muted);font-size:12px">'+esc(d.enviado_por||'')+'</span></td>';
+        h+='<td style="white-space:nowrap"><button class="btn sec mini" onclick="A.abrirDoc(&quot;'+esc(d.storage_path)+'&quot;)">Abrir</button> <button class="btn danger mini" onclick="A.delDoc(&quot;'+d.id+'&quot;,&quot;'+esc(d.storage_path)+'&quot;)">Excluir</button></td></tr>';
+      });h+='</table></div>';}
+    h+='</div>';
+  }
+  if(t==='fat'){
+    h='<div class="panel"><h2>Faturas ABRAPE desta usina</h2>';
+    if(!S.u.faturas.length)h+='<p class="empty">Nenhuma fatura registrada. As faturas serao geradas no fechamento de cada ciclo (numeracao automatica na serie geral).</p>';
+    else{h+='<div class="tblwrap"><table><tr><th>Fatura</th><th>Ciclo</th><th>Cliente</th><th class="num">Valor</th><th>Vencimento</th><th>Status</th></tr>';
+      S.u.faturas.forEach(function(f){
+        h+='<tr><td><b>'+f.numero+'/'+f.ano+'</b></td><td>'+(f.ciclos?mesLbl(f.ciclos.mes_referencia):'&mdash;')+'</td><td>'+esc(f.clientes?f.clientes.nome:'&mdash;')+'</td><td class="num">'+money(f.valor)+'</td><td>'+dt(f.vencimento)+'</td><td>'+chip(STFAT,f.status)+'</td></tr>';
+      });h+='</table></div>';}
+    h+='</div>';
+  }
+  el('utab').innerHTML=h;
+}
+
+// ---------- CLIENTES ----------
+async function loadClientes(){
+  var q=await Promise.all([
+    sb.from('clientes').select('*, ucs(id,numero_uc)').order('nome'),
+    sb.from('investidores').select('*, usinas(nome)').order('nome'),
+    sb.from('usinas').select('id,nome').order('nome')
+  ]);
+  for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
+  S.cli=q[0].data;S.inv=q[1].data;S.usinas=q[2].data;
+  renderClientes();
+}
+function renderClientes(){
+  var h='<div class="pagehead"><h1>Clientes & Investidores</h1></div>';
+  h+='<div class="tabs"><button class="'+(S.cliTab==='clientes'?'on':'')+'" onclick="A.ctab(&quot;clientes&quot;)">Clientes</button><button class="'+(S.cliTab==='inv'?'on':'')+'" onclick="A.ctab(&quot;inv&quot;)">Investidores</button></div>';
+  if(S.cliTab==='clientes'){
+    h+='<div class="actbar"><button class="btn" onclick="A.formCliente()">Novo cliente</button></div>';
+    h+='<div class="panel">';
+    if(!S.cli.length)h+='<p class="empty">Nenhum cliente cadastrado ainda &mdash; serao importados na migracao.</p>';
+    else{h+='<div class="tblwrap"><table><tr><th>Cliente</th><th>Grupo</th><th>CNPJ/CPF</th><th>E-mails</th><th class="num">UCs</th><th></th></tr>';
+      S.cli.forEach(function(c){
+        h+='<tr><td><b>'+esc(c.nome)+'</b></td><td>'+esc(c.grupo||'')+'</td><td class="mono">'+esc(c.cnpj_cpf||'')+'</td>';
+        h+='<td>'+(c.emails&&c.emails.length?c.emails.map(function(e){return '<a href="mailto:'+esc(e)+'">'+esc(e)+'</a>';}).join('<br>'):'&mdash;')+'</td>';
+        h+='<td class="num">'+(c.ucs?c.ucs.length:0)+'</td>';
+        h+='<td><button class="btn sec mini" onclick="A.formCliente(&quot;'+c.id+'&quot;)">Editar</button></td></tr>';
+      });h+='</table></div>';}
+    h+='<p class="note">O envio automatico de relatorios por e-mail (dominio abrapesolar.com.br) entra na proxima etapa da plataforma.</p></div>';
+  }else{
+    h+='<div class="actbar"><button class="btn" onclick="A.formInv()">Novo investidor</button></div>';
+    h+='<div class="panel">';
+    if(!S.inv.length)h+='<p class="empty">Nenhum investidor cadastrado ainda.</p>';
+    else{h+='<div class="tblwrap"><table><tr><th>Investidor</th><th>Usina</th><th>E-mail</th><th class="num">% contratado</th><th></th></tr>';
+      S.inv.forEach(function(v){
+        h+='<tr><td><b>'+esc(v.nome)+'</b></td><td>'+esc(v.usinas?v.usinas.nome:'&mdash;')+'</td><td>'+(v.email?'<a href="mailto:'+esc(v.email)+'">'+esc(v.email)+'</a>':'&mdash;')+'</td><td class="num">'+(v.percentual_contratado!==null&&v.percentual_contratado!==undefined?Number(v.percentual_contratado).toLocaleString('pt-BR')+'%':'&mdash;')+'</td>';
+        h+='<td><button class="btn sec mini" onclick="A.formInv(&quot;'+v.id+'&quot;)">Editar</button></td></tr>';
+      });h+='</table></div>';}
+    h+='</div>';
+  }
+  el('main').innerHTML=h;
+}
+
+// ---------- COBRANCA ----------
+async function loadCobranca(){
+  var q=await Promise.all([
+    sb.from('faturas_abrape').select('*, clientes(nome), ciclos(mes_referencia, usinas(nome))').order('criado_em',{ascending:false}).limit(300),
+    sb.from('boletos').select('*, faturas_abrape(numero,ano,clientes(nome))').order('criado_em',{ascending:false}).limit(300)
+  ]);
+  for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
+  var fat=q[0].data,bol=q[1].data;
+  var ab=fat.filter(function(f){return f.status==='emitida';});
+  var vc=fat.filter(function(f){return f.status==='vencida';});
+  var pg=fat.filter(function(f){return f.status==='paga';});
+  function soma(a){return a.reduce(function(x,f){return x+Number(f.valor||0);},0);}
+  var h='<div class="pagehead"><h1>Central de Cobranca</h1><span class="sub">Faturas ABRAPE e boletos Banco Inter</span></div>';
+  h+='<div class="kpis">';
+  h+='<div class="kpi"><div class="l">Em aberto</div><div class="v">'+money(soma(ab))+'</div><div class="d">'+ab.length+' faturas</div></div>';
+  h+='<div class="kpi"><div class="l">Vencidas</div><div class="v">'+money(soma(vc))+'</div><div class="d">'+vc.length+' faturas</div></div>';
+  h+='<div class="kpi"><div class="l">Pagas</div><div class="v">'+money(soma(pg))+'</div><div class="d">'+pg.length+' faturas</div></div>';
+  h+='</div>';
+  h+='<div class="panel"><h2>Faturas</h2>';
+  if(!fat.length)h+='<p class="empty">Nenhuma fatura registrada ainda. A numeracao seguira a serie geral ja usada nos relatorios (ex.: 66/2026 em diante).</p>';
+  else{h+='<div class="tblwrap"><table><tr><th>Fatura</th><th>Usina</th><th>Ciclo</th><th>Cliente</th><th class="num">Valor</th><th>Venc.</th><th>Status</th></tr>';
+    fat.forEach(function(f){
+      h+='<tr><td><b>'+f.numero+'/'+f.ano+'</b></td><td>'+esc(f.ciclos&&f.ciclos.usinas?f.ciclos.usinas.nome:'&mdash;')+'</td><td>'+(f.ciclos?mesLbl(f.ciclos.mes_referencia):'&mdash;')+'</td><td>'+esc(f.clientes?f.clientes.nome:'&mdash;')+'</td><td class="num">'+money(f.valor)+'</td><td>'+dt(f.vencimento)+'</td><td>'+chip(STFAT,f.status)+'</td></tr>';
+    });h+='</table></div>';}
+  h+='</div>';
+  h+='<div class="panel"><h2>Boletos Banco Inter</h2>';
+  if(!bol.length)h+='<p class="empty">Nenhum boleto registrado. A triagem do Inter passara a gravar aqui automaticamente.</p>';
+  else{h+='<div class="tblwrap"><table><tr><th>Nosso numero</th><th>Fatura</th><th>Cliente</th><th class="num">Valor</th><th>Venc.</th><th>Status</th><th class="num">Recebido</th></tr>';
+    bol.forEach(function(b){
+      h+='<tr><td class="mono">'+esc(b.nosso_numero||'')+'</td><td>'+(b.faturas_abrape?b.faturas_abrape.numero+'/'+b.faturas_abrape.ano:'&mdash;')+'</td><td>'+esc(b.faturas_abrape&&b.faturas_abrape.clientes?b.faturas_abrape.clientes.nome:'&mdash;')+'</td><td class="num">'+money(b.valor)+'</td><td>'+dt(b.vencimento)+'</td><td>'+chip(STBOL,b.status)+'</td><td class="num">'+money(b.valor_recebido)+'</td></tr>';
+    });h+='</table></div>';}
+  h+='</div>';
+  el('main').innerHTML=h;
+}
+
+// ---------- ADMIN ----------
+async function loadAdmin(){
+  var r=await sb.from('usuarios_autorizados').select('*').order('criado_em');
+  if(r.error)throw r.error;
+  var h='<div class="pagehead"><h1>Administracao</h1></div>';
+  h+='<div class="panel"><h2>Usuarios autorizados</h2><div class="tblwrap"><table><tr><th>Nome</th><th>E-mail</th><th>Papel</th></tr>';
+  r.data.forEach(function(u){h+='<tr><td><b>'+esc(u.nome)+'</b></td><td>'+esc(u.email)+'</td><td>'+(u.papel==='admin'?'<span class="chip gold">Admin</span>':'<span class="chip info">Operacao</span>')+'</td></tr>';});
+  h+='</table></div>';
+  if(S.perfil.papel==='admin'){
+    h+='<div class="actbar" style="margin-top:16px"><div class="fld"><label>Nome</label><input id="nu-nome"></div><div class="fld"><label>E-mail</label><input id="nu-email" type="email"></div><div class="fld"><label>Papel</label><select id="nu-papel"><option value="operacao">Operacao</option><option value="admin">Admin</option></select></div><button class="btn" onclick="A.addUsuario()">Autorizar</button></div>';
+  }
+  h+='</div>';
+  h+='<div class="panel"><h2>Sobre a plataforma</h2><p style="font-size:14px">Mesa de Comando ABRAPE &mdash; v1. Banco de dados e arquivos no Supabase (regiao Sao Paulo), acesso restrito por e-mail autorizado. O processamento das contas (leitura de PDFs, ledger de compensacao, relatorios) e feito pelo Claude, que grava os resultados aqui. Envio automatico de e-mails e emissao de boletos integrados entram nas proximas etapas.</p></div>';
+  el('main').innerHTML=h;
+}
+
+// ---------- ACOES ----------
+window.A={
+  swLogin:function(isIn){el('f-in').hidden=!isIn;el('f-up').hidden=isIn;el('sw-in').classList.toggle('on',isIn);el('sw-up').classList.toggle('on',!isIn);},
+  login:async function(){
+    try{
+      var r=await sb.auth.signInWithPassword({email:val('li-email'),password:el('li-senha').value});
+      if(r.error){
+        var m=r.error.message||'';
+        if(m.indexOf('Invalid login')>-1)throw new Error('E-mail ou senha incorretos.');
+        if(m.indexOf('not confirmed')>-1)throw new Error('Confirme seu e-mail antes de entrar (veja a caixa de entrada).');
+        throw r.error;
+      }
+    }catch(e){fail(e);}
+  },
+  signup:async function(){
+    try{
+      var em=val('su-email'),p1=el('su-senha').value,p2=el('su-senha2').value;
+      if(!em)throw new Error('Informe o e-mail.');
+      if(p1.length<8)throw new Error('A senha precisa de pelo menos 8 caracteres.');
+      if(p1!==p2)throw new Error('As senhas nao conferem.');
+      var r=await sb.auth.signUp({email:em,password:p1,options:{emailRedirectTo:window.location.href.split('#')[0]}});
+      if(r.error)throw r.error;
+      if(r.data&&r.data.user&&r.data.user.identities&&r.data.user.identities.length===0)throw new Error('Este e-mail ja tem conta. Use a aba Entrar.');
+      if(!r.data.session)toast('Conta criada! Verifique seu e-mail (inclusive o spam) para confirmar o acesso.');
+    }catch(e){fail(e);}
+  },
+  sair:async function(){await sb.auth.signOut();},
+  utab:function(t){S.usinaTab=t;renderUsina();},
+  ctab:function(t){S.cliTab=t;renderClientes();},
+  abrirCiclo:async function(){
+    try{
+      var m=val('nc-mes');if(!m)throw new Error('Escolha o mes de referencia.');
+      var y=Number(m.split('-')[0]),mo=Number(m.split('-')[1]);
+      var py=mo===1?y-1:y,pm=mo===1?12:mo-1;
+      var r=await sb.from('ciclos').insert({usina_id:S.usinaId,mes_referencia:m+'-01',mes_geracao:py+'-'+String(pm).padStart(2,'0')+'-01',status:'aberto'});
+      if(r.error){if((r.error.message||'').indexOf('duplicate')>-1)throw new Error('Ja existe ciclo para esse mes nesta usina.');throw r.error;}
+      toast('Ciclo aberto.');loadUsina().catch(fail);
+    }catch(e){fail(e);}
+  },
+  stCiclo:async function(id,st){
+    try{var r=await sb.from('ciclos').update({status:st}).eq('id',id);if(r.error)throw r.error;toast('Status atualizado.');}catch(e){fail(e);}
+  },
+  salvarUsina:async function(){
+    try{
+      var r=await sb.from('usinas').update({
+        nome:val('ed-nome'),modelo:val('ed-modelo'),distribuidora:val('ed-dist'),cidade:val('ed-cidade')||null,uf:val('ed-uf')||null,
+        potencia_kwp:val('ed-pot')||null,num_modulos:val('ed-mod')||null,inversores:val('ed-inv')||null,titularidade:val('ed-tit')||null,
+        tem_investidor:val('ed-invst')==='s',ativo:val('ed-ativo')==='s',observacoes:val('ed-obs')||null
+      }).eq('id',S.usinaId);
+      if(r.error)throw r.error;toast('Cadastro salvo.');loadUsina().catch(fail);
+    }catch(e){fail(e);}
+  },
+  achaOuCriaUC:async function(numero,extras){
+    var f=await sb.from('ucs').select('id').eq('numero_uc',numero);
+    if(f.error)throw f.error;
+    if(f.data.length)return f.data[0].id;
+    var body={numero_uc:numero,tipo:extras.tipo||'recebedora'};
+    if(extras.cliente_id)body.cliente_id=extras.cliente_id;
+    if(extras.cidade)body.cidade=extras.cidade;
+    if(extras.multi_fonte)body.multi_fonte=true;
+    var i=await sb.from('ucs').insert(body).select('id').single();
+    if(i.error)throw i.error;
+    return i.data.id;
+  },
+  vincularUC:async function(){
+    try{
+      var num=val('vu-num');if(!num)throw new Error('Informe o numero da UC.');
+      var pct=val('vu-pct');if(!pct)throw new Error('Informe o percentual de rateio.');
+      var vig=val('vu-vig');if(!vig)throw new Error('Informe o inicio da vigencia.');
+      var ucId=await A.achaOuCriaUC(num,{tipo:'recebedora',cliente_id:val('vu-cli')||null,cidade:val('vu-cidade'),multi_fonte:val('vu-multi')==='s'});
+      var r=await sb.from('rateios').insert({usina_id:S.usinaId,uc_id:ucId,percentual:pct,vigencia_inicio:vig});
+      if(r.error)throw r.error;
+      var mo=val('vu-modelo');
+      if(mo){
+        var body={usina_id:S.usinaId,uc_id:ucId,modelo:mo,vigencia_inicio:vig};
+        if(mo==='desconto')body.percentual_desconto=val('vu-valor')||null;else body.tarifa_fixa=val('vu-valor')||null;
+        var c=await sb.from('condicoes_comerciais').insert(body);if(c.error)throw c.error;
+      }
+      toast('UC vinculada.');loadUsina().catch(fail);
+    }catch(e){fail(e);}
+  },
+  delRateio:async function(id){
+    if(!window.confirm('Encerrar este vinculo de rateio? (o historico de compensacoes e mantido)'))return;
+    try{var r=await sb.from('rateios').delete().eq('id',id);if(r.error)throw r.error;toast('Vinculo removido.');loadUsina().catch(fail);}catch(e){fail(e);}
+  },
+  setGeradora:async function(){
+    try{
+      var num=val('ug-num');if(!num)throw new Error('Informe o numero da UC geradora.');
+      var ucId=await A.achaOuCriaUC(num,{tipo:'geradora'});
+      var r=await sb.from('usinas').update({uc_geradora_id:ucId}).eq('id',S.usinaId);
+      if(r.error)throw r.error;toast('UC geradora definida.');loadUsina().catch(fail);
+    }catch(e){fail(e);}
+  },
+  uploadDoc:async function(){
+    try{
+      var inp=el('up-file');
+      if(!inp.files.length)throw new Error('Escolha pelo menos um arquivo.');
+      var cicloId=val('up-ciclo')||null,tipo=val('up-tipo');
+      var cic=S.u.ciclos.filter(function(c){return c.id===cicloId;})[0];
+      var pasta=cic?String(cic.mes_referencia).slice(0,7):'geral';
+      for(var i=0;i<inp.files.length;i++){
+        var f=inp.files[i];
+        var nome=f.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9._-]/g,'_');
+        var path=S.usinaId+'/'+pasta+'/'+Date.now()+'_'+nome;
+        var up=await sb.storage.from('documentos').upload(path,f);
+        if(up.error)throw up.error;
+        var r=await sb.from('documentos').insert({usina_id:S.usinaId,ciclo_id:cicloId,tipo:tipo,storage_path:path,nome_arquivo:f.name,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email});
+        if(r.error)throw r.error;
+      }
+      toast(inp.files.length+' arquivo(s) enviado(s).');loadUsina().catch(fail);
+    }catch(e){fail(e);}
+  },
+  abrirDoc:async function(path){
+    try{
+      var r=await sb.storage.from('documentos').createSignedUrl(path,3600);
+      if(r.error)throw r.error;
+      window.open(r.data.signedUrl,'_blank');
+    }catch(e){fail(e);}
+  },
+  delDoc:async function(id,path){
+    if(!window.confirm('Excluir este documento do banco e do arquivo? Essa acao nao tem volta.'))return;
+    try{
+      var s=await sb.storage.from('documentos').remove([path]);if(s.error)throw s.error;
+      var r=await sb.from('documentos').delete().eq('id',id);if(r.error)throw r.error;
+      toast('Documento excluido.');loadUsina().catch(fail);
+    }catch(e){fail(e);}
+  },
+  formCliente:function(id){
+    var c=id?S.cli.filter(function(x){return x.id===id;})[0]:{};
+    var h='<h2>'+(id?'Editar cliente':'Novo cliente')+'</h2><div class="frm">';
+    h+='<div class="fld full"><label>Nome / Razao social</label><input id="cl-nome" value="'+esc(c.nome||'')+'"></div>';
+    h+='<div class="fld"><label>CNPJ / CPF</label><input id="cl-doc" value="'+esc(c.cnpj_cpf||'')+'"></div>';
+    h+='<div class="fld"><label>Grupo</label><input id="cl-grupo" value="'+esc(c.grupo||'')+'" placeholder="ex.: NELFARMA"></div>';
+    h+='<div class="fld full"><label>E-mails (separados por virgula)</label><input id="cl-emails" value="'+esc((c.emails||[]).join(', '))+'"></div>';
+    h+='<div class="fld"><label>Telefone</label><input id="cl-tel" value="'+esc(c.telefone||'')+'"></div>';
+    h+='<div class="fld"><label>Cidade</label><input id="cl-cidade" value="'+esc(c.cidade||'')+'"></div>';
+    h+='<div class="fld"><label>UF</label><input id="cl-uf" value="'+esc(c.uf||'')+'"></div>';
+    h+='<div class="fld full"><label>Endereco</label><input id="cl-end" value="'+esc(c.endereco||'')+'"></div>';
+    h+='<div class="fld full"><label>Observacoes</label><textarea id="cl-obs">'+esc(c.observacoes||'')+'</textarea></div>';
+    h+='</div><div style="margin-top:14px;display:flex;gap:8px"><button class="btn" onclick="A.salvarCliente('+(id?'&quot;'+id+'&quot;':'null')+')">Salvar</button><button class="btn sec" onclick="A.closeModal()">Cancelar</button></div>';
+    A.modal(h);
+  },
+  salvarCliente:async function(id){
+    try{
+      var body={nome:val('cl-nome'),cnpj_cpf:val('cl-doc')||null,grupo:val('cl-grupo')||null,
+        emails:val('cl-emails')?val('cl-emails').split(',').map(function(e){return e.trim();}).filter(Boolean):[],
+        telefone:val('cl-tel')||null,cidade:val('cl-cidade')||null,uf:val('cl-uf')||null,endereco:val('cl-end')||null,observacoes:val('cl-obs')||null};
+      if(!body.nome)throw new Error('Informe o nome.');
+      var r=id?await sb.from('clientes').update(body).eq('id',id):await sb.from('clientes').insert(body);
+      if(r.error)throw r.error;
+      A.closeModal();toast('Cliente salvo.');loadClientes().catch(fail);
+    }catch(e){fail(e);}
+  },
+  formInv:function(id){
+    var v=id?S.inv.filter(function(x){return x.id===id;})[0]:{};
+    var h='<h2>'+(id?'Editar investidor':'Novo investidor')+'</h2><div class="frm">';
+    h+='<div class="fld full"><label>Nome</label><input id="iv-nome" value="'+esc(v.nome||'')+'"></div>';
+    h+='<div class="fld"><label>CNPJ / CPF</label><input id="iv-doc" value="'+esc(v.cnpj_cpf||'')+'"></div>';
+    h+='<div class="fld"><label>E-mail</label><input id="iv-email" value="'+esc(v.email||'')+'"></div>';
+    h+='<div class="fld"><label>Telefone</label><input id="iv-tel" value="'+esc(v.telefone||'')+'"></div>';
+    h+='<div class="fld"><label>Usina</label><select id="iv-usina"><option value="">&mdash;</option>';
+    S.usinas.forEach(function(u){h+='<option value="'+u.id+'"'+(v.usina_id===u.id?' selected':'')+'>'+esc(u.nome)+'</option>';});
+    h+='</select></div>';
+    h+='<div class="fld"><label>% contratado</label><input id="iv-pct" type="number" step="0.01" value="'+(v.percentual_contratado!==null&&v.percentual_contratado!==undefined?v.percentual_contratado:'')+'"></div>';
+    h+='<div class="fld full"><label>Observacoes</label><textarea id="iv-obs">'+esc(v.observacoes||'')+'</textarea></div>';
+    h+='</div><div style="margin-top:14px;display:flex;gap:8px"><button class="btn" onclick="A.salvarInv('+(id?'&quot;'+id+'&quot;':'null')+')">Salvar</button><button class="btn sec" onclick="A.closeModal()">Cancelar</button></div>';
+    A.modal(h);
+  },
+  salvarInv:async function(id){
+    try{
+      var body={nome:val('iv-nome'),cnpj_cpf:val('iv-doc')||null,email:val('iv-email')||null,telefone:val('iv-tel')||null,usina_id:val('iv-usina')||null,percentual_contratado:val('iv-pct')||null,observacoes:val('iv-obs')||null};
+      if(!body.nome)throw new Error('Informe o nome.');
+      var r=id?await sb.from('investidores').update(body).eq('id',id):await sb.from('investidores').insert(body);
+      if(r.error)throw r.error;
+      A.closeModal();toast('Investidor salvo.');loadClientes().catch(fail);
+    }catch(e){fail(e);}
+  },
+  addUsuario:async function(){
+    try{
+      var r=await sb.from('usuarios_autorizados').insert({email:val('nu-email').toLowerCase(),nome:val('nu-nome'),papel:val('nu-papel')});
+      if(r.error)throw r.error;toast('Usuario autorizado.');loadAdmin().catch(fail);
+    }catch(e){fail(e);}
+  },
+  modal:function(html){
+    var bg=document.createElement('div');bg.id='modalbg';
+    bg.innerHTML='<div id="modal">'+html+'</div>';
+    bg.addEventListener('click',function(ev){if(ev.target===bg)A.closeModal();});
+    document.body.appendChild(bg);
+  },
+  closeModal:function(){var m=el('modalbg');if(m)m.remove();}
+};
+window.go=go;
+
+sb.auth.onAuthStateChange(function(ev,session){
+  if(ev==='SIGNED_IN'&&!S.perfil)enter().catch(fail);
+  if(ev==='SIGNED_OUT'){S.perfil=null;showLogin();}
+});
+sb.auth.getSession().then(function(r){
+  if(r.data&&r.data.session)enter().catch(fail);else showLogin();
+});
+</script>
+</body>
+</html>
