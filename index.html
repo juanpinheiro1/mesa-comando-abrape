@@ -170,7 +170,7 @@ function go(v,arg){
   ['dash','cli','cob','adm'].forEach(function(k){var b=el('nv-'+k);if(b)b.classList.toggle('on',k===v||(v==='usina'&&k==='dash'));});
   el('main').innerHTML='<p class="empty">Carregando&hellip;</p>';
   if(v==='dash')loadDash().catch(fail);
-  if(v==='usina'){S.usinaId=arg||S.usinaId;S.usinaTab='ciclos';loadUsina().catch(fail);}
+  if(v==='usina'){S.usinaId=arg||S.usinaId;S.usinaTab='ciclos';S.cicloSel=null;loadUsina().catch(fail);}
   if(v==='cli')loadClientes().catch(fail);
   if(v==='cob')loadCobranca().catch(fail);
   if(v==='adm')loadAdmin().catch(fail);
@@ -223,10 +223,11 @@ async function loadUsina(){
     sb.from('condicoes_comerciais').select('*').eq('usina_id',id),
     sb.from('geracao_mensal').select('*').eq('usina_id',id).order('mes_geracao',{ascending:false}),
     sb.from('documentos').select('*, ciclos(mes_referencia)').eq('usina_id',id).order('criado_em',{ascending:false}),
-    sb.from('clientes').select('id,nome').order('nome')
+    sb.from('clientes').select('id,nome').order('nome'),
+    sb.from('compensacoes').select('*, ucs(numero_uc,clientes(nome)), ciclos!inner(usina_id)').eq('ciclos.usina_id',id)
   ]);
   for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
-  S.u={usina:q[0].data,ciclos:q[1].data,rateios:q[2].data,cond:q[3].data,ger:q[4].data,docs:q[5].data};
+  S.u={usina:q[0].data,ciclos:q[1].data,rateios:q[2].data,cond:q[3].data,ger:q[4].data,docs:q[5].data,comp:q[7].data};
   S.clientes=q[6].data;
   var fr=await sb.from('faturas_abrape').select('*, clientes(nome), ciclos!inner(usina_id,mes_referencia)').eq('ciclos.usina_id',id).order('criado_em',{ascending:false});
   if(fr.error)throw fr.error;
@@ -250,17 +251,51 @@ function renderUsina(){
 function renderUsinaTab(){
   var t=S.usinaTab,u=S.u.usina,h='';
   if(t==='ciclos'){
-    h='<div class="panel"><h2>Abrir novo ciclo</h2><div class="actbar">';
+    if(S.cicloSel){
+      var cs=S.u.ciclos.filter(function(c){return c.id===S.cicloSel;})[0];
+      if(cs){
+        var cdocs=S.u.docs.filter(function(d){return d.ciclo_id===cs.id;});
+        var docTable=function(tipos,vazio){
+          var ds=cdocs.filter(function(d){return tipos.indexOf(d.tipo)>-1;});
+          if(!ds.length)return '<p class="empty" style="padding:6px 0">'+vazio+'</p>';
+          var x='<div class="tblwrap"><table><tr><th>Documento</th><th>Tipo</th><th></th></tr>';
+          ds.forEach(function(d){
+            x+='<tr><td style="word-break:break-all">'+esc(d.nome_arquivo)+'</td><td>'+(TIPODOC[d.tipo]||esc(d.tipo))+'</td>';
+            x+='<td style="white-space:nowrap"><button class="btn sec mini" onclick="A.abrirDoc(&quot;'+esc(d.storage_path)+'&quot;)">Abrir</button></td></tr>';
+          });
+          return x+'</table></div>';
+        };
+        h+='<div class="panel" style="border-color:var(--gold)"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">';
+        h+='<h2 style="margin:0">Ciclo '+mesLbl(cs.mes_referencia)+'</h2>'+chip(STCICLO,cs.status);
+        h+='<span style="color:var(--muted);font-size:12.5px">Geracao de '+mesLbl(cs.mes_geracao)+'</span>';
+        h+='<button class="btn sec mini" style="margin-left:auto" onclick="A.verCiclo(null)">Fechar detalhe</button></div>';
+        var comps=(S.u.comp||[]).filter(function(x){return x.ciclo_id===cs.id;});
+        h+='<h2>Fechamento por UC</h2>';
+        if(!comps.length)h+='<p class="empty" style="padding:6px 0">Sem apuracao registrada neste ciclo.</p>';
+        else{h+='<div class="tblwrap"><table><tr><th>UC</th><th>Cliente</th><th class="num">Creditada</th><th class="num">Fatura ABRAPE</th><th class="num">Economia</th><th>Status</th></tr>';
+          comps.forEach(function(x){var uc=x.ucs||{};
+            h+='<tr><td class="mono">'+esc(uc.numero_uc||'')+'</td><td>'+esc(uc.clientes?uc.clientes.nome:'&mdash;')+'</td><td class="num">'+kwh(x.kwh_creditado)+'</td><td class="num">'+money(x.valor_fatura)+'</td><td class="num">'+money(x.economia_cliente)+'</td>';
+            h+='<td>'+(x.status==='ok'?'<span class="chip ok">OK</span>':x.status==='verificar'?'<span class="chip bad">Verificar</span>':'<span class="chip warn">Pendente</span>')+'</td></tr>';
+          });h+='</table></div>';}
+        h+='<h2 style="margin-top:16px">Relatorios da usina</h2>'+docTable(['demonstrativo_abrape','demonstrativo_geracao','relatorio_investidor'],'Nenhum demonstrativo ou dashboard da usina neste ciclo.');
+        h+='<h2 style="margin-top:16px">Relatorios e boletos das UCs</h2>'+docTable(['relatorio_cliente','boleto'],'Nenhum relatorio individual de UC neste ciclo.');
+        h+='<h2 style="margin-top:16px">Contas e documentos-fonte</h2>'+docTable(['conta_geradora','demonstrativo_energisa','conta_uc_recebedora','rateio_planilha','outro'],'Nenhuma conta ou documento-fonte neste ciclo.');
+        h+='</div>';
+      }
+    }
+    h+='<div class="panel"><h2>Abrir novo ciclo</h2><div class="actbar">';
     h+='<div class="fld"><label>Mes de referencia (fatura)</label><input type="month" id="nc-mes"></div>';
     h+='<button class="btn" onclick="A.abrirCiclo()">Abrir ciclo</button></div>';
     h+='<p class="note">O mes de geracao correspondente e registrado automaticamente como o mes anterior (regra padrao; ajuste depois se a usina tiver outra defasagem).</p></div>';
     h+='<div class="panel"><h2>Ciclos de fechamento</h2>';
     if(!S.u.ciclos.length)h+='<p class="empty">Nenhum ciclo aberto ainda. Abra o primeiro ciclo para comecar a subir documentos.</p>';
-    else{h+='<div class="tblwrap"><table><tr><th>Mes fatura</th><th>Mes geracao</th><th>Status</th><th>Observacoes</th></tr>';
+    else{h+='<div class="tblwrap"><table><tr><th>Mes fatura</th><th>Mes geracao</th><th>Status</th><th class="num">Docs</th><th>Observacoes</th><th></th></tr>';
       S.u.ciclos.forEach(function(c){
+        var nd=S.u.docs.filter(function(d){return d.ciclo_id===c.id;}).length;
         h+='<tr><td><b>'+mesLbl(c.mes_referencia)+'</b></td><td>'+mesLbl(c.mes_geracao)+'</td><td><select class="inline" onchange="A.stCiclo(&quot;'+c.id+'&quot;,this.value)">';
         Object.keys(STCICLO).forEach(function(k){h+='<option value="'+k+'"'+(c.status===k?' selected':'')+'>'+STCICLO[k][0]+'</option>';});
-        h+='</select></td><td>'+esc(c.observacoes||'')+'</td></tr>';
+        h+='</select></td><td class="num">'+nd+'</td><td>'+esc(c.observacoes||'')+'</td>';
+        h+='<td><button class="btn mini'+(S.cicloSel===c.id?'':' sec')+'" onclick="A.verCiclo(&quot;'+c.id+'&quot;)">Detalhar</button></td></tr>';
       });h+='</table></div>';}
     h+='</div>';
     h+='<div class="panel"><h2>Geracao mensal</h2>';
@@ -471,7 +506,8 @@ window.A={
     }catch(e){fail(e);}
   },
   sair:async function(){await sb.auth.signOut();},
-  utab:function(t){S.usinaTab=t;renderUsina();},
+  utab:function(t){S.usinaTab=t;S.cicloSel=null;renderUsina();},
+  verCiclo:function(id){S.cicloSel=id;renderUsina();if(id)window.scrollTo({top:0,behavior:'smooth'});},
   ctab:function(t){S.cliTab=t;renderClientes();},
   abrirCiclo:async function(){
     try{
