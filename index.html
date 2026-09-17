@@ -236,6 +236,11 @@ async function loadUsina(){
   var fr=await sb.from('faturas_abrape').select('*, clientes(nome), ciclos!inner(usina_id,mes_referencia)').eq('ciclos.usina_id',id).order('criado_em',{ascending:false});
   if(fr.error)throw fr.error;
   S.u.faturas=fr.data;
+  S.u.ger_uc=null;
+  if(S.u.usina.uc_geradora_id){
+    var gq=await sb.from('ucs').select('*').eq('id',S.u.usina.uc_geradora_id).single();
+    if(!gq.error)S.u.ger_uc=gq.data;
+  }
   renderUsina();
 }
 function renderUsina(){
@@ -387,9 +392,16 @@ function renderUsinaTab(){
     h+='<div class="fld"><label>Cidade da UC</label><input id="vu-cidade"></div>';
     h+='<div class="fld"><label>Multi-fonte?</label><select id="vu-multi"><option value="n">Nao</option><option value="s">Sim (recebe de mais de uma usina)</option></select></div>';
     h+='</div><div style="margin-top:14px"><button class="btn" onclick="A.vincularUC()">Vincular UC</button></div></div>';
-    var g=S.u.usina.uc_geradora_id;
-    h+='<div class="panel"><h2>UC geradora</h2><p style="font-size:14px" id="ger-atual">'+(g?'Vinculada.':'Ainda nao informada.')+'</p>';
-    h+='<div class="actbar"><div class="fld"><label>Numero da UC geradora</label><input id="ug-num"></div><button class="btn sec" onclick="A.setGeradora()">Definir</button></div></div>';
+    var gu=S.u.ger_uc;
+    h+='<div class="panel"><h2>UC geradora</h2>';
+    if(gu){
+      h+='<p style="font-size:15px;margin:0 0 4px"><b class="mono">'+esc(gu.numero_uc)+'</b>'+(gu.matricula&&gu.matricula!==gu.numero_uc?' <span style="color:var(--muted);font-size:12.5px">(matricula '+esc(gu.matricula)+')</span>':'')+(gu.cidade?' <span style="color:var(--muted);font-size:12.5px">&middot; '+esc(gu.cidade)+(gu.uf?'/'+esc(gu.uf):'')+'</span>':'')+'</p>';
+      if(u.titularidade)h+='<p style="font-size:13px;margin:0 0 4px"><span style="color:var(--muted)">Titularidade:</span> '+esc(u.titularidade)+'</p>';
+      if(gu.observacoes)h+='<p class="note" style="margin:0 0 10px">'+esc(gu.observacoes)+'</p>';
+    } else {
+      h+='<p style="font-size:14px">Ainda nao informada.</p>';
+    }
+    h+='<div class="actbar"><div class="fld"><label>'+(gu?'Alterar UC geradora (numero)':'Numero da UC geradora')+'</label><input id="ug-num"></div><button class="btn sec" onclick="A.setGeradora()">Definir</button></div></div>';
   }
   if(t==='docs'){
     h='<div class="panel"><h2>Enviar documento</h2><div class="frm">';
