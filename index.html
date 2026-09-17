@@ -290,13 +290,20 @@ function renderUsinaTab(){
     h='<div class="panel"><h2>UCs recebedoras e rateio</h2>';
     if(!S.u.rateios.length)h+='<p class="empty">Nenhuma UC vinculada ainda.</p>';
     else{h+='<div class="tblwrap"><table><tr><th>UC</th><th>Cliente</th><th class="num">Rateio</th><th>Vigencia</th><th>Condicao comercial</th><th></th></tr>';
-      S.u.rateios.forEach(function(r){
-        var uc=r.ucs||{};var cond=S.u.cond.filter(function(c){return c.uc_id===r.uc_id&&!c.vigencia_fim;})[0];
-        var cs=cond?(cond.modelo==='desconto'?'Desconto '+Number(cond.percentual_desconto).toLocaleString('pt-BR')+'%':'Tarifa fixa '+money(cond.tarifa_fixa)+'/kWh'):'&mdash;';
-        h+='<tr><td><b class="mono">'+esc(uc.numero_uc)+'</b>'+(uc.multi_fonte?' <span class="chip warn">multi-fonte</span>':'')+'<br><span style="color:var(--muted);font-size:12px">'+esc(uc.cidade||'')+'</span></td>';
-        h+='<td>'+esc(uc.clientes?uc.clientes.nome:'&mdash;')+'</td><td class="num">'+Number(r.percentual).toLocaleString('pt-BR')+'%</td>';
+      var rats=S.u.rateios.slice().sort(function(a,b){
+        var ea=a.vigencia_fim?1:0, eb=b.vigencia_fim?1:0;
+        if(ea!==eb)return ea-eb;
+        return String(b.vigencia_inicio).localeCompare(String(a.vigencia_inicio));
+      });
+      rats.forEach(function(r){
+        var uc=r.ucs||{};var enc=!!r.vigencia_fim;
+        var cond=S.u.cond.filter(function(c){return c.uc_id===r.uc_id&&!c.vigencia_fim;})[0];
+        if(!cond&&enc)cond=S.u.cond.filter(function(c){return c.uc_id===r.uc_id;}).sort(function(a,b){return String(b.vigencia_inicio).localeCompare(String(a.vigencia_inicio));})[0];
+        var cs=cond?(cond.modelo==='desconto'?'Desconto '+Number(cond.percentual_desconto).toLocaleString('pt-BR')+'%':'Tarifa fixa '+money(cond.tarifa_fixa)+'/kWh')+(enc?' <span style="color:var(--muted);font-size:11.5px">(encerrada)</span>':''):'&mdash;';
+        h+='<tr'+(enc?' style="opacity:.55"':'')+'><td><b class="mono">'+esc(uc.numero_uc)+'</b>'+(enc?' <span class="chip">Encerrado</span>':'')+(uc.multi_fonte?' <span class="chip warn">multi-fonte</span>':'')+'<br><span style="color:var(--muted);font-size:12px">'+esc(uc.cidade||'')+'</span></td>';
+        h+='<td>'+esc(uc.clientes?uc.clientes.nome:'&mdash;')+'</td><td class="num">'+(enc?'<s>'+Number(r.percentual).toLocaleString('pt-BR')+'%</s> 0%':Number(r.percentual).toLocaleString('pt-BR')+'%')+'</td>';
         h+='<td>'+dt(r.vigencia_inicio)+(r.vigencia_fim?' a '+dt(r.vigencia_fim):'')+'</td><td>'+cs+'</td>';
-        h+='<td><button class="btn danger mini" onclick="A.delRateio(&quot;'+r.id+'&quot;)">Encerrar</button></td></tr>';
+        h+='<td>'+(enc?'<span style="color:var(--muted);font-size:12px">historico</span>':'<button class="btn danger mini" onclick="A.encerrarRateio(&quot;'+r.id+'&quot;,&quot;'+r.uc_id+'&quot;)">Encerrar</button>')+'</td></tr>';
       });h+='</table></div>';}
     h+='</div>';
     h+='<div class="panel"><h2>Vincular UC recebedora</h2><div class="frm">';
@@ -518,9 +525,14 @@ window.A={
       toast('UC vinculada.');loadUsina().catch(fail);
     }catch(e){fail(e);}
   },
-  delRateio:async function(id){
-    if(!window.confirm('Encerrar este vinculo de rateio? (o historico de compensacoes e mantido)'))return;
-    try{var r=await sb.from('rateios').delete().eq('id',id);if(r.error)throw r.error;toast('Vinculo removido.');loadUsina().catch(fail);}catch(e){fail(e);}
+  encerrarRateio:async function(id,ucId){
+    if(!window.confirm('Encerrar a vigencia deste vinculo de rateio a partir de hoje? O historico (compensacoes, faturas) e mantido e a UC passa a aparecer como Encerrado.'))return;
+    try{
+      var hoje=new Date().toISOString().slice(0,10);
+      var r=await sb.from('rateios').update({vigencia_fim:hoje}).eq('id',id);if(r.error)throw r.error;
+      var c=await sb.from('condicoes_comerciais').update({vigencia_fim:hoje}).eq('usina_id',S.usinaId).eq('uc_id',ucId).is('vigencia_fim',null);if(c.error)throw c.error;
+      toast('Vinculo encerrado (historico mantido).');loadUsina().catch(fail);
+    }catch(e){fail(e);}
   },
   setGeradora:async function(){
     try{
