@@ -203,16 +203,27 @@ async function loadDash(){
   h+='<div class="kpi"><div class="l">Boletos vencidos</div><div class="v">'+bven+'</div></div>';
   h+='<div class="kpi"'+(fila.length?' style="border-color:var(--gold)"':'')+'><div class="l">Fila do Claude</div><div class="v">'+fila.length+'</div><div class="d">'+(fila.length?'solicitacoes aguardando &mdash; diga &quot;roda a fila&quot; ao Claude':'nenhuma solicitacao pendente')+'</div></div>';
   h+='</div><div class="grid">';
-  usinas.forEach(function(u){
+  var cardUsina=function(u){
     var c=cmap[u.id];
-    h+='<div class="card" onclick="go(&quot;usina&quot;,&quot;'+u.id+'&quot;)"><h3>'+esc(u.nome)+'</h3>';
-    h+='<div class="meta">'+esc(u.distribuidora)+(u.cidade?' &middot; '+esc(u.cidade)+'/'+esc(u.uf):'')+'</div>';
-    h+='<div class="chips"><span class="chip '+(u.modelo==='autoconsumo'?'info':'')+'">'+(u.modelo==='autoconsumo'?'Autoconsumo':'Distribuicao')+'</span>';
-    if(u.tem_investidor)h+='<span class="chip gold">Investidor</span>';
-    h+=c?chip(STCICLO,c.status):'<span class="chip">Sem ciclo no mes</span>';
-    h+='</div></div>';
-  });
+    var x='<div class="card"'+(u.ativo?'':' style="opacity:.55"')+' onclick="go(&quot;usina&quot;,&quot;'+u.id+'&quot;)"><h3>'+esc(u.nome)+'</h3>';
+    x+='<div class="meta">'+esc(u.distribuidora)+(u.cidade?' &middot; '+esc(u.cidade)+'/'+esc(u.uf):'')+'</div>';
+    x+='<div class="chips"><span class="chip '+(u.modelo==='autoconsumo'?'info':'')+'">'+(u.modelo==='autoconsumo'?'Autoconsumo':'Distribuicao')+'</span>';
+    if(u.tem_investidor)x+='<span class="chip gold">Investidor</span>';
+    x+=u.ativo?(c?chip(STCICLO,c.status):'<span class="chip">Sem ciclo no mes</span>'):'<span class="chip">Inativa</span>';
+    return x+'</div></div>';
+  };
+  usinas.filter(function(u){return u.ativo;}).forEach(function(u){h+=cardUsina(u);});
   h+='</div>';
+  var inativas=usinas.filter(function(u){return !u.ativo;});
+  if(inativas.length){
+    if(S.showInativas){
+      h+='<h2 style="font-size:14px;color:var(--muted);margin:22px 0 10px">Usinas inativas <button class="btn sec mini" onclick="A.toggleInativas()">ocultar</button></h2><div class="grid">';
+      inativas.forEach(function(u){h+=cardUsina(u);});
+      h+='</div>';
+    } else {
+      h+='<p class="note" style="margin-top:18px"><a href="javascript:void(0)" onclick="A.toggleInativas()">Mostrar '+inativas.length+' usina(s) inativa(s)</a></p>';
+    }
+  }
   el('main').innerHTML=h;
 }
 
@@ -552,6 +563,7 @@ window.A={
     }catch(e){fail(e);}
   },
   sair:async function(){await sb.auth.signOut();},
+  toggleInativas:function(){S.showInativas=!S.showInativas;loadDash().catch(fail);},
   utab:function(t){S.usinaTab=t;S.cicloSel=null;renderUsina();},
   verCiclo:function(id){S.cicloSel=id;renderUsina();if(id)window.scrollTo({top:0,behavior:'smooth'});},
   solicitar:async function(cicloId,tipo){
