@@ -332,12 +332,13 @@ function renderUsinaTab(){
       var cs=S.u.ciclos.filter(function(c){return c.id===S.cicloSel;})[0];
       if(cs){
         var cdocs=S.u.docs.filter(function(d){return d.ciclo_id===cs.id;});
-        var docTable=function(tipos,vazio){
+        var docTable=function(tipos,vazio,comEnvio){
           var ds=cdocs.filter(function(d){return tipos.indexOf(d.tipo)>-1;});
           if(!ds.length)return '<p class="empty" style="padding:6px 0">'+vazio+'</p>';
-          var x='<div class="tblwrap"><table><tr><th>Documento</th><th>Tipo</th><th></th></tr>';
+          var x='<div class="tblwrap"><table><tr><th>Documento</th><th>Tipo</th>'+(comEnvio?'<th>Envio</th>':'')+'<th></th></tr>';
           ds.forEach(function(d){
             x+='<tr><td style="word-break:break-all">'+esc(d.nome_arquivo)+'</td><td>'+(TIPODOC[d.tipo]||esc(d.tipo))+'</td>';
+            if(comEnvio)x+='<td>'+(d.enviado_em?'<span class="chip ok">Enviado '+dt(d.enviado_em)+'</span>'+(d.enviado_para?'<br><span style="color:var(--muted);font-size:11.5px">'+esc(d.enviado_para)+'</span>':''):'<span class="chip warn">Nao enviado</span>')+'</td>';
             x+='<td style="white-space:nowrap"><button class="btn sec mini" onclick="A.abrirDoc(&quot;'+esc(d.storage_path)+'&quot;)">Abrir</button></td></tr>';
           });
           return x+'</table></div>';
@@ -361,8 +362,9 @@ function renderUsinaTab(){
             h+='<button class="btn sec mini" onclick="A.cancelarSol(&quot;'+jaPede.id+'&quot;)">Cancelar solicitacao</button>';
             h+='<p class="note" style="margin-top:8px">Aguardando o Claude &mdash; diga &quot;roda a fila&quot; a ele para executar agora.</p>';
           } else {
-            h+='<button class="btn" onclick="A.solicitar(&quot;'+cs.id+'&quot;,&quot;'+acao+'&quot;)">'+TIPOSOL[acao]+'</button>';
-            h+='<p class="note" style="margin-top:8px">'+hint+'</p>';
+            if(acao==='enviar')h+='<button class="btn" onclick="A.modalEnvio(&quot;'+cs.id+'&quot;)">'+TIPOSOL[acao]+'&hellip;</button>';
+            else h+='<button class="btn" onclick="A.solicitar(&quot;'+cs.id+'&quot;,&quot;'+acao+'&quot;)">'+TIPOSOL[acao]+'</button>';
+            h+='<p class="note" style="margin-top:8px">'+hint+(acao==='enviar'?' Abre a lista do que sera enviado, com a marcacao do que ja foi.':'')+'</p>';
           }
         } else {
           h+='<p class="note">Ciclo concluido &mdash; nenhuma acao pendente.</p>';
@@ -382,10 +384,16 @@ function renderUsinaTab(){
         else{h+='<div class="tblwrap"><table><tr><th>UC</th><th>Cliente</th><th class="num">Creditada</th><th class="num">Fatura ABRAPE</th><th class="num">Economia</th><th>Status</th></tr>';
           comps.forEach(function(x){var uc=x.ucs||{};
             h+='<tr><td class="mono">'+esc(uc.numero_uc||'')+'</td><td>'+esc(uc.clientes?uc.clientes.nome:'&mdash;')+'</td><td class="num">'+kwh(x.kwh_creditado)+'</td><td class="num">'+money(x.valor_fatura)+'</td><td class="num">'+money(x.economia_cliente)+'</td>';
-            h+='<td>'+(x.status==='ok'?'<span class="chip ok">OK</span>':x.status==='verificar'?'<span class="chip bad">Verificar</span>':'<span class="chip warn">Pendente</span>')+'</td></tr>';
+            h+='<td style="white-space:nowrap">'+(x.status==='ok'?'<span class="chip ok">OK</span>':x.status==='verificar'?'<span class="chip bad">Verificar</span>':'<span class="chip warn">Pendente</span>');
+            if(x.status!=='ok'){
+              var temConta=cdocs.filter(function(d){return d.uc_id===x.uc_id&&d.tipo==='conta_uc_recebedora';}).length>0;
+              if(temConta)h+=' <span class="chip info">conta anexada</span>';
+              else h+=' <button class="btn mini" onclick="event.stopPropagation();A.anexarConta(&quot;'+cs.id+'&quot;,&quot;'+x.uc_id+'&quot;)">Anexar conta</button>';
+            }
+            h+='</td></tr>';
           });h+='</table></div>';}
         h+='<h2 style="margin-top:16px">Relatorios da usina</h2>'+docTable(['demonstrativo_abrape','demonstrativo_geracao','relatorio_investidor'],'Nenhum demonstrativo ou dashboard da usina neste ciclo.');
-        h+='<h2 style="margin-top:16px">Relatorios e boletos das UCs</h2>'+docTable(['relatorio_cliente','boleto'],'Nenhum relatorio individual de UC neste ciclo.');
+        h+='<h2 style="margin-top:16px">Relatorios e boletos das UCs</h2>'+docTable(['relatorio_cliente','boleto'],'Nenhum relatorio individual de UC neste ciclo.',true);
         h+='<h2 style="margin-top:16px">Contas e documentos-fonte</h2>'+docTable(['conta_geradora','demonstrativo_energisa','conta_uc_recebedora','rateio_planilha','outro'],'Nenhuma conta ou documento-fonte neste ciclo.');
         h+='</div>';
       }
@@ -630,6 +638,50 @@ window.A={
       var r=await sb.from('solicitacoes').insert({usina_id:S.usinaId,ciclo_id:cicloId,tipo:tipo,solicitado_por:S.perfil.email});
       if(r.error)throw r.error;
       toast('Solicitacao registrada na fila do Claude.');loadUsina().catch(fail);
+    }catch(e){fail(e);}
+  },
+  anexarConta:function(cicloId,ucId){
+    var inp=document.createElement('input');inp.type='file';inp.accept='application/pdf,.pdf';
+    inp.onchange=async function(){
+      try{
+        var f=inp.files[0];if(!f)return;
+        var cic=S.u.ciclos.filter(function(c){return c.id===cicloId;})[0];
+        var pasta=cic?String(cic.mes_referencia).slice(0,7):'geral';
+        var nome=f.name.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-zA-Z0-9._-]/g,'_');
+        var path=S.usinaId+'/'+pasta+'/'+Date.now()+'_'+nome;
+        var up=await sb.storage.from('documentos').upload(path,f);
+        if(up.error)throw up.error;
+        var r=await sb.from('documentos').insert({usina_id:S.usinaId,ciclo_id:cicloId,uc_id:ucId,tipo:'conta_uc_recebedora',storage_path:path,nome_arquivo:f.name,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email});
+        if(r.error)throw r.error;
+        toast('Conta anexada a UC. O Claude processa na proxima rodada da fila.');loadUsina().catch(fail);
+      }catch(e){fail(e);}
+    };
+    inp.click();
+  },
+  modalEnvio:function(cicloId){
+    var ds=S.u.docs.filter(function(d){return d.ciclo_id===cicloId&&['relatorio_cliente','boleto','relatorio_investidor','demonstrativo_abrape'].indexOf(d.tipo)>-1;});
+    if(!ds.length){toast('Nenhum relatorio ou boleto gerado neste ciclo ainda.',true);return;}
+    var x='<h2>Enviar relatorios do ciclo</h2>';
+    x+='<p class="note" style="margin-bottom:12px">Os ja enviados vem <b>desmarcados</b> &mdash; marque um enviado apenas se quiser reenviar de proposito.</p>';
+    x+='<div class="tblwrap"><table><tr><th></th><th>Documento</th><th>Tipo</th><th>Envio</th></tr>';
+    ds.forEach(function(d){
+      x+='<tr><td><input type="checkbox" id="env_'+d.id+'"'+(d.enviado_em?'':' checked')+'></td>';
+      x+='<td style="word-break:break-all">'+esc(d.nome_arquivo)+'</td><td>'+(TIPODOC[d.tipo]||esc(d.tipo))+'</td>';
+      x+='<td>'+(d.enviado_em?'<span class="chip ok">Enviado '+dt(d.enviado_em)+'</span>':'<span class="chip warn">Nao enviado</span>')+'</td></tr>';
+    });
+    x+='</table></div>';
+    x+='<div style="margin-top:14px;display:flex;gap:8px"><button class="btn" onclick="A.solicitarEnvio(&quot;'+cicloId+'&quot;)">Registrar solicitacao de envio</button><button class="btn sec" onclick="A.closeModal()">Cancelar</button></div>';
+    A.modal(x);
+  },
+  solicitarEnvio:async function(cicloId){
+    try{
+      var ds=S.u.docs.filter(function(d){return d.ciclo_id===cicloId;});
+      var ids=[],nomes=[];
+      ds.forEach(function(d){var cb=el('env_'+d.id);if(cb&&cb.checked){ids.push(d.id);nomes.push(d.nome_arquivo);}});
+      if(!ids.length)throw new Error('Nenhum documento selecionado.');
+      var r=await sb.from('solicitacoes').insert({usina_id:S.usinaId,ciclo_id:cicloId,tipo:'enviar',solicitado_por:S.perfil.email,observacoes:JSON.stringify({documentos:ids})});
+      if(r.error)throw r.error;
+      A.closeModal();toast('Envio de '+ids.length+' documento(s) registrado na fila do Claude.');loadUsina().catch(fail);
     }catch(e){fail(e);}
   },
   cancelarSol:async function(id){
