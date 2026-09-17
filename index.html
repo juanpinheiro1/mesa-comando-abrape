@@ -247,8 +247,10 @@ async function loadDash(){
     var c=latest[u.id];
     var nv=nivel(u);
     var pend=(c?(pendCiclo[c.id]||0):0), atr=(atrPorUsina[u.id]||0);
-    var x='<div class="card"'+(u.ativo?'':' style="opacity:.55"')+' onclick="go(&quot;usina&quot;,&quot;'+u.id+'&quot;)">';
-    x+='<div style="display:flex;align-items:center;gap:8px"><span class="dot" style="background:'+(u.ativo?CORLUZ[nv]:'var(--muted)')+'"></span><h3 style="margin:0">'+esc(u.nome)+'</h3></div>';
+    var cor=u.ativo?CORLUZ[nv]:'var(--muted)';
+    var fundo='background:color-mix(in srgb, '+cor+' 13%, var(--surface));border-color:color-mix(in srgb, '+cor+' 45%, var(--line));';
+    var x='<div class="card" style="'+fundo+(u.ativo?'':'opacity:.55;')+'" onclick="go(&quot;usina&quot;,&quot;'+u.id+'&quot;)">';
+    x+='<h3 style="margin:0">'+esc(u.nome)+'</h3>';
     x+='<div class="meta">'+esc(u.distribuidora)+(u.cidade?' &middot; '+esc(u.cidade)+'/'+esc(u.uf):'')+' &middot; '+(ucsCount[u.id]||0)+' UC'+((ucsCount[u.id]||0)===1?'':'s')+' recebedora'+((ucsCount[u.id]||0)===1?'':'s')+'</div>';
     if(u.ativo){
       if(c){
