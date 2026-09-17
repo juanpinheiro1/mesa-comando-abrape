@@ -53,6 +53,7 @@ main{padding-block:26px 60px}
 .card h3{font-size:16px;font-weight:700}
 .card .meta{font-size:12.5px;color:var(--muted)}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
+.dot{width:12px;height:12px;min-width:12px;border-radius:50%;display:inline-block}
 .chip{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:99px;background:var(--chip-mut);color:var(--muted);letter-spacing:.02em}
 .chip.ok{background:var(--chip-ok);color:var(--ok)}
 .chip.warn{background:var(--chip-warn);color:var(--warn)}
@@ -179,41 +180,97 @@ function go(v,arg){
 // ---------- DASHBOARD ----------
 async function loadDash(){
   var hoje=new Date();
-  var mesRef=hoje.getFullYear()+'-'+String(hoje.getMonth()+1).padStart(2,'0')+'-01';
+  var hojeISO=hoje.toISOString().slice(0,10);
   var q=await Promise.all([
     sb.from('usinas').select('*').order('nome'),
-    sb.from('ciclos').select('*').eq('mes_referencia',mesRef),
-    sb.from('faturas_abrape').select('valor,status'),
+    sb.from('ciclos').select('*').order('mes_referencia',{ascending:false}),
+    sb.from('faturas_abrape').select('id,numero,ano,valor,vencimento,status, clientes(nome), ciclos(usina_id,mes_referencia)'),
     sb.from('boletos').select('valor,status'),
-    sb.from('solicitacoes').select('id,tipo,usinas(nome)').eq('status','pendente')
+    sb.from('solicitacoes').select('id,tipo,ciclo_id,usina_id,criado_em, usinas(nome), ciclos(mes_referencia)').eq('status','pendente'),
+    sb.from('rateios').select('usina_id,vigencia_fim'),
+    sb.from('compensacoes').select('ciclo_id,status').in('status',['pendente','verificar'])
   ]);
   for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
   var usinas=q[0].data;S.usinas=usinas;
-  var fila=q[4].data;
-  var cmap={};q[1].data.forEach(function(c){cmap[c.usina_id]=c;});
-  var fab=q[2].data.filter(function(f){return f.status==='emitida'||f.status==='vencida';});
+  var ciclos=q[1].data, faturas=q[2].data, fila=q[4].data;
+  var latest={};ciclos.forEach(function(c){if(!latest[c.usina_id])latest[c.usina_id]=c;});
+  var ucsCount={};q[5].data.forEach(function(r){if(!r.vigencia_fim)ucsCount[r.usina_id]=(ucsCount[r.usina_id]||0)+1;});
+  var pendCiclo={};q[6].data.forEach(function(x){pendCiclo[x.ciclo_id]=(pendCiclo[x.ciclo_id]||0)+1;});
+  var atrasadas=faturas.filter(function(f){return f.status==='vencida'||(f.status==='emitida'&&f.vencimento&&f.vencimento<hojeISO);});
+  var atrPorUsina={};atrasadas.forEach(function(f){if(f.ciclos)atrPorUsina[f.ciclos.usina_id]=(atrPorUsina[f.ciclos.usina_id]||0)+1;});
+  var fab=faturas.filter(function(f){return f.status==='emitida'||f.status==='vencida';});
   var vab=fab.reduce(function(a,f){return a+Number(f.valor||0);},0);
-  var bven=q[3].data.filter(function(b){return b.status==='vencido';}).length;
-  var concl=q[1].data.filter(function(c){return c.status==='concluido';}).length;
-  var h='<div class="pagehead"><h1>Painel das Usinas</h1><span class="sub">Ciclo de '+MESES[hoje.getMonth()]+'/'+hoje.getFullYear()+'</span></div>';
+  var bven=q[3].data.filter(function(b){return b.status==='vencido'||b.status==='expirado';}).length;
+  var ativas=usinas.filter(function(u){return u.ativo;});
+  var conclMes=ativas.filter(function(u){var c=latest[u.id];return c&&c.status==='concluido';}).length;
+
+  // classificacao de urgencia: 0=vermelho (pendencia), 1=amarelo em andamento, 2=faturado aguardando pgto, 3=verde concluido, 4=sem ciclo
+  var nivel=function(u){
+    var c=latest[u.id];
+    if(!c)return 4;
+    var pend=(pendCiclo[c.id]||0)+(atrPorUsina[u.id]||0);
+    if(pend>0)return 0;
+    if(c.status==='concluido')return 3;
+    if(c.status==='faturado')return 2;
+    return 1;
+  };
+  var CORLUZ=['var(--bad)','var(--warn)','var(--gold)','var(--ok)','var(--muted)'];
+
+  var h='<div class="pagehead"><h1>Painel das Usinas</h1><span class="sub">'+MESES[hoje.getMonth()]+'/'+hoje.getFullYear()+'</span></div>';
   h+='<div class="kpis">';
-  h+='<div class="kpi"><div class="l">Usinas ativas</div><div class="v">'+usinas.filter(function(u){return u.ativo;}).length+'</div></div>';
-  h+='<div class="kpi"><div class="l">Fechamentos do mes</div><div class="v">'+concl+' / '+usinas.filter(function(u){return u.ativo;}).length+'</div><div class="d">ciclos concluidos</div></div>';
+  h+='<div class="kpi"><div class="l">Usinas ativas</div><div class="v">'+ativas.length+'</div></div>';
+  h+='<div class="kpi"><div class="l">Ciclos concluidos</div><div class="v">'+conclMes+' / '+ativas.length+'</div><div class="d">no ciclo mais recente de cada usina</div></div>';
   h+='<div class="kpi"><div class="l">Faturas em aberto</div><div class="v">'+fab.length+'</div><div class="d">'+money(vab)+'</div></div>';
-  h+='<div class="kpi"><div class="l">Boletos vencidos</div><div class="v">'+bven+'</div></div>';
-  h+='<div class="kpi"'+(fila.length?' style="border-color:var(--gold)"':'')+'><div class="l">Fila do Claude</div><div class="v">'+fila.length+'</div><div class="d">'+(fila.length?'solicitacoes aguardando &mdash; diga &quot;roda a fila&quot; ao Claude':'nenhuma solicitacao pendente')+'</div></div>';
+  h+='<div class="kpi"'+(atrasadas.length?' style="border-color:var(--bad)"':'')+'><div class="l">Em atraso</div><div class="v">'+atrasadas.length+'</div><div class="d">faturas vencidas sem pagamento</div></div>';
+  h+='<div class="kpi"'+(fila.length?' style="border-color:var(--gold)"':'')+'><div class="l">Fila do Claude</div><div class="v">'+fila.length+'</div><div class="d">'+(fila.length?'solicitacoes aguardando &mdash; diga &quot;roda a fila&quot;':'nenhuma solicitacao pendente')+'</div></div>';
   h+='</div><div class="grid">';
+
   var cardUsina=function(u){
-    var c=cmap[u.id];
-    var x='<div class="card"'+(u.ativo?'':' style="opacity:.55"')+' onclick="go(&quot;usina&quot;,&quot;'+u.id+'&quot;)"><h3>'+esc(u.nome)+'</h3>';
-    x+='<div class="meta">'+esc(u.distribuidora)+(u.cidade?' &middot; '+esc(u.cidade)+'/'+esc(u.uf):'')+'</div>';
+    var c=latest[u.id];
+    var nv=nivel(u);
+    var pend=(c?(pendCiclo[c.id]||0):0), atr=(atrPorUsina[u.id]||0);
+    var x='<div class="card"'+(u.ativo?'':' style="opacity:.55"')+' onclick="go(&quot;usina&quot;,&quot;'+u.id+'&quot;)">';
+    x+='<div style="display:flex;align-items:center;gap:8px"><span class="dot" style="background:'+(u.ativo?CORLUZ[nv]:'var(--muted)')+'"></span><h3 style="margin:0">'+esc(u.nome)+'</h3></div>';
+    x+='<div class="meta">'+esc(u.distribuidora)+(u.cidade?' &middot; '+esc(u.cidade)+'/'+esc(u.uf):'')+' &middot; '+(ucsCount[u.id]||0)+' UC'+((ucsCount[u.id]||0)===1?'':'s')+' recebedora'+((ucsCount[u.id]||0)===1?'':'s')+'</div>';
+    if(u.ativo){
+      if(c){
+        if(c.status==='concluido')x+='<div style="font-size:13px"><span style="color:var(--muted)">Ultimo ciclo processado:</span> <b>'+mesLbl(c.mes_referencia)+'</b></div>';
+        else x+='<div style="font-size:13px"><span style="color:var(--muted)">Ciclo em acao:</span> <b>'+mesLbl(c.mes_referencia)+'</b></div>';
+      } else x+='<div style="font-size:13px;color:var(--muted)">Nenhum ciclo aberto</div>';
+    }
     x+='<div class="chips"><span class="chip '+(u.modelo==='autoconsumo'?'info':'')+'">'+(u.modelo==='autoconsumo'?'Autoconsumo':'Distribuicao')+'</span>';
     if(u.tem_investidor)x+='<span class="chip gold">Investidor</span>';
-    x+=u.ativo?(c?chip(STCICLO,c.status):'<span class="chip">Sem ciclo no mes</span>'):'<span class="chip">Inativa</span>';
+    if(u.ativo&&c)x+=chip(STCICLO,c.status);
+    if(!u.ativo)x+='<span class="chip">Inativa</span>';
+    if(pend)x+='<span class="chip bad">'+pend+' UC'+(pend===1?'':'s')+' a verificar</span>';
+    if(atr)x+='<span class="chip bad">'+atr+' fatura'+(atr===1?'':'s')+' em atraso</span>';
     return x+'</div></div>';
   };
-  usinas.filter(function(u){return u.ativo;}).forEach(function(u){h+=cardUsina(u);});
+  ativas.slice().sort(function(a,b){var d=nivel(a)-nivel(b);return d!==0?d:a.nome.localeCompare(b.nome);}).forEach(function(u){h+=cardUsina(u);});
   h+='</div>';
+
+  // ---- bloco Atencao (abaixo dos cards) ----
+  var itens=[];
+  atrasadas.forEach(function(f){
+    var un=usinas.filter(function(u){return f.ciclos&&u.id===f.ciclos.usina_id;})[0];
+    itens.push({uid:un?un.id:null, txt:'Fatura '+(f.numero?f.numero+'/'+f.ano:'s/n')+' &middot; '+esc(f.clientes?f.clientes.nome:'')+' &middot; '+money(f.valor)+' &middot; venceu '+dt(f.vencimento)+(un?' &mdash; '+esc(un.nome):''), tipo:'bad'});
+  });
+  ativas.forEach(function(u){
+    var c=latest[u.id];
+    if(c&&pendCiclo[c.id])itens.push({uid:u.id, txt:esc(u.nome)+' &middot; ciclo '+mesLbl(c.mes_referencia)+': '+pendCiclo[c.id]+' UC(s) com apuracao pendente/verificar', tipo:'warn'});
+  });
+  fila.forEach(function(s){
+    itens.push({uid:s.usina_id, txt:'Fila do Claude: '+({processar:'processar',faturar:'faturar',enviar:'enviar relatorios'}[s.tipo])+' &middot; '+esc(s.usinas?s.usinas.nome:'')+' &middot; ciclo '+(s.ciclos?mesLbl(s.ciclos.mes_referencia):'')+' (solicitado '+dt(s.criado_em)+')', tipo:'gold'});
+  });
+  h+='<div class="panel" style="margin-top:22px'+(itens.length?';border-color:var(--warn)':'')+'"><h2>Atencao</h2>';
+  if(!itens.length)h+='<p class="empty">Nada exigindo acao no momento &mdash; tudo em dia.</p>';
+  else{h+='<div class="tblwrap"><table>';
+    itens.forEach(function(it){
+      h+='<tr><td style="width:14px"><span class="dot" style="background:var(--'+(it.tipo==='bad'?'bad':it.tipo==='warn'?'warn':'gold')+')"></span></td><td>'+it.txt+'</td>';
+      h+='<td style="white-space:nowrap">'+(it.uid?'<button class="btn sec mini" onclick="go(&quot;usina&quot;,&quot;'+it.uid+'&quot;)">Abrir</button>':'')+'</td></tr>';
+    });h+='</table></div>';}
+  h+='</div>';
+
   var inativas=usinas.filter(function(u){return !u.ativo;});
   if(inativas.length){
     if(S.showInativas){
@@ -221,7 +278,7 @@ async function loadDash(){
       inativas.forEach(function(u){h+=cardUsina(u);});
       h+='</div>';
     } else {
-      h+='<p class="note" style="margin-top:18px"><a href="javascript:void(0)" onclick="A.toggleInativas()">Mostrar '+inativas.length+' usina(s) inativa(s)</a></p>';
+      h+='<p class="note" style="margin-top:14px"><a href="javascript:void(0)" onclick="A.toggleInativas()">Mostrar '+inativas.length+' usina(s) inativa(s)</a></p>';
     }
   }
   el('main').innerHTML=h;
