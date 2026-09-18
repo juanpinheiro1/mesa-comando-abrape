@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
@@ -699,7 +699,7 @@ async function loadSite(){
 function renderSite(){
   if(!S.siteTab)S.siteTab='noticias';
   var novos=S.leads.filter(function(l){return l.status==='novo';}).length;
-  var h='<div class="pagehead"><h1>Site institucional</h1><span class="sub"><a href="https://juanpinheiro1.github.io/site-abrapesolar/" target="_blank">abrir o site &nearr;</a></span></div>';
+  var h='<div class="pagehead"><h1>Site institucional</h1><span class="sub"><a href="https://abrapesolar.com.br/" target="_blank">abrir o site &nearr;</a></span></div>';
   h+='<div class="tabs">';
   h+='<button class="'+(S.siteTab==='noticias'?'on':'')+'" onclick="A.stab(&quot;noticias&quot;)">Noticias ('+S.noticias.length+')</button>';
   h+='<button class="'+(S.siteTab==='leads'?'on':'')+'" onclick="A.stab(&quot;leads&quot;)">Contatos do site'+(novos?' ('+novos+' novos)':' ('+S.leads.length+')')+'</button>';
