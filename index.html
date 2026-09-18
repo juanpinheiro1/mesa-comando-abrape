@@ -586,21 +586,36 @@ async function loadCobranca(){
   ]);
   for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
   var fat=q[0].data,bol=q[1].data;
-  var ab=fat.filter(function(f){return f.status==='emitida';});
-  var vc=fat.filter(function(f){return f.status==='vencida';});
-  var pg=fat.filter(function(f){return f.status==='paga';});
+  var hojeISO=new Date().toISOString().slice(0,10);
+  var classe=function(f){
+    if(f.status==='paga')return 'pagas';
+    if(f.status==='cancelada')return 'canceladas';
+    if(f.status==='vencida'||(f.vencimento&&f.vencimento<hojeISO))return 'vencidas';
+    return 'receber';
+  };
+  var grupos={receber:[],vencidas:[],canceladas:[],pagas:[]};
+  fat.forEach(function(f){grupos[classe(f)].push(f);});
   function soma(a){return a.reduce(function(x,f){return x+Number(f.valor||0);},0);}
   var h='<div class="pagehead"><h1>Central de Cobranca</h1><span class="sub">Faturas ABRAPE e boletos Banco Inter</span></div>';
   h+='<div class="kpis">';
-  h+='<div class="kpi"><div class="l">Em aberto</div><div class="v">'+money(soma(ab))+'</div><div class="d">'+ab.length+' faturas</div></div>';
-  h+='<div class="kpi"><div class="l">Vencidas</div><div class="v">'+money(soma(vc))+'</div><div class="d">'+vc.length+' faturas</div></div>';
-  h+='<div class="kpi"><div class="l">Pagas</div><div class="v">'+money(soma(pg))+'</div><div class="d">'+pg.length+' faturas</div></div>';
+  h+='<div class="kpi"><div class="l">Contas a Receber</div><div class="v">'+money(soma(grupos.receber))+'</div><div class="d">'+grupos.receber.length+' faturas no prazo</div></div>';
+  h+='<div class="kpi"'+(grupos.vencidas.length?' style="border-color:var(--bad)"':'')+'><div class="l">Contas Vencidas</div><div class="v">'+money(soma(grupos.vencidas))+'</div><div class="d">'+grupos.vencidas.length+' faturas vencidas</div></div>';
+  h+='<div class="kpi"><div class="l">Total a Receber</div><div class="v">'+money(soma(grupos.receber)+soma(grupos.vencidas))+'</div><div class="d">no prazo + vencidas</div></div>';
+  h+='<div class="kpi"><div class="l">Pagas</div><div class="v">'+money(soma(grupos.pagas))+'</div><div class="d">'+grupos.pagas.length+' faturas quitadas</div></div>';
   h+='</div>';
   h+='<div class="panel"><h2>Faturas</h2>';
-  if(!fat.length)h+='<p class="empty">Nenhuma fatura registrada ainda. A numeracao seguira a serie geral ja usada nos relatorios (ex.: 66/2026 em diante).</p>';
+  if(!S.cobFiltro)S.cobFiltro='receber';
+  var FILTROS=[['receber','A receber'],['vencidas','Vencidas'],['canceladas','Canceladas'],['pagas','Pagas']];
+  h+='<div class="switch" style="max-width:520px;margin-bottom:14px">';
+  FILTROS.forEach(function(ft){
+    h+='<button class="'+(S.cobFiltro===ft[0]?'on':'')+'" onclick="A.cobFiltro(&quot;'+ft[0]+'&quot;)">'+ft[1]+' ('+grupos[ft[0]].length+')</button>';
+  });
+  h+='</div>';
+  var lista=grupos[S.cobFiltro]||[];
+  if(!lista.length)h+='<p class="empty">Nenhuma fatura neste filtro.</p>';
   else{h+='<div class="tblwrap"><table><tr><th>Fatura</th><th>Usina</th><th>Ciclo</th><th>Cliente</th><th class="num">Valor</th><th>Venc.</th><th>Status</th></tr>';
-    fat.forEach(function(f){
-      h+='<tr><td><b>'+f.numero+'/'+f.ano+'</b></td><td>'+esc(f.ciclos&&f.ciclos.usinas?f.ciclos.usinas.nome:'&mdash;')+'</td><td>'+(f.ciclos?mesLbl(f.ciclos.mes_referencia):'&mdash;')+'</td><td>'+esc(f.clientes?f.clientes.nome:'&mdash;')+'</td><td class="num">'+money(f.valor)+'</td><td>'+dt(f.vencimento)+'</td><td>'+chip(STFAT,f.status)+'</td></tr>';
+    lista.slice().sort(function(a,b){return String(a.vencimento||'').localeCompare(String(b.vencimento||''));}).forEach(function(f){
+      h+='<tr><td><b>'+(f.numero?f.numero+'/'+f.ano:'s/n')+'</b></td><td>'+esc(f.ciclos&&f.ciclos.usinas?f.ciclos.usinas.nome:'&mdash;')+'</td><td>'+(f.ciclos?mesLbl(f.ciclos.mes_referencia):'&mdash;')+'</td><td>'+esc(f.clientes?f.clientes.nome:'&mdash;')+'</td><td class="num">'+money(f.valor)+'</td><td>'+dt(f.vencimento)+'</td><td>'+(classe(f)==='vencidas'?'<span class="chip bad">Vencida</span>':chip(STFAT,f.status))+'</td></tr>';
     });h+='</table></div>';}
   h+='</div>';
   h+='<div class="panel"><h2>Boletos Banco Inter</h2>';
@@ -657,6 +672,7 @@ window.A={
   },
   sair:async function(){await sb.auth.signOut();},
   toggleInativas:function(){S.showInativas=!S.showInativas;loadDash().catch(fail);},
+  cobFiltro:function(f){S.cobFiltro=f;loadCobranca().catch(fail);},
   utab:function(t){S.usinaTab=t;S.cicloSel=null;renderUsina();},
   verCiclo:function(id){S.cicloSel=id;renderUsina();if(id)window.scrollTo({top:0,behavior:'smooth'});},
   solicitar:async function(cicloId,tipo){
