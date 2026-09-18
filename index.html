@@ -162,14 +162,16 @@ function renderShell(){
   '<nav><button id="nv-dash" onclick="go(&quot;dash&quot;)">Usinas</button>'+
   '<button id="nv-cli" onclick="go(&quot;cli&quot;)">Clientes</button>'+
   '<button id="nv-cob" onclick="go(&quot;cob&quot;)">Cobranca</button>'+
+  '<button id="nv-site" onclick="go(&quot;site&quot;)">Site</button>'+
   '<button id="nv-adm" onclick="go(&quot;adm&quot;)">Administracao</button></nav>'+
   '<div class="userchip"><span><b>'+esc(S.perfil.nome)+'</b> &middot; '+(S.perfil.papel==='admin'?'Admin':'Operacao')+'</span><button onclick="A.sair()">Sair</button></div>'+
   '</div></header><main class="wrap" id="main"></main>';
 }
 function go(v,arg){
   S.view=v;
-  ['dash','cli','cob','adm'].forEach(function(k){var b=el('nv-'+k);if(b)b.classList.toggle('on',k===v||(v==='usina'&&k==='dash'));});
+  ['dash','cli','cob','site','adm'].forEach(function(k){var b=el('nv-'+k);if(b)b.classList.toggle('on',k===v||(v==='usina'&&k==='dash'));});
   el('main').innerHTML='<p class="empty">Carregando&hellip;</p>';
+  if(v==='site')loadSite().catch(fail);
   if(v==='dash')loadDash().catch(fail);
   if(v==='usina'){S.usinaId=arg||S.usinaId;S.usinaTab='ciclos';S.cicloSel=null;loadUsina().catch(fail);}
   if(v==='cli')loadClientes().catch(fail);
@@ -683,6 +685,57 @@ async function loadCobranca(){
   el('main').innerHTML=h;
 }
 
+// ---------- SITE (noticias + leads) ----------
+var STLEAD={novo:['Novo','warn'],em_contato:['Em contato','info'],convertido:['Convertido','ok'],descartado:['Descartado','']};
+async function loadSite(){
+  var q=await Promise.all([
+    sb.from('noticias').select('*').order('data_publicacao',{ascending:false}),
+    sb.from('leads').select('*').order('criado_em',{ascending:false})
+  ]);
+  for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
+  S.noticias=q[0].data;S.leads=q[1].data;
+  renderSite();
+}
+function renderSite(){
+  if(!S.siteTab)S.siteTab='noticias';
+  var novos=S.leads.filter(function(l){return l.status==='novo';}).length;
+  var h='<div class="pagehead"><h1>Site institucional</h1><span class="sub"><a href="https://juanpinheiro1.github.io/site-abrapesolar/" target="_blank">abrir o site &nearr;</a></span></div>';
+  h+='<div class="tabs">';
+  h+='<button class="'+(S.siteTab==='noticias'?'on':'')+'" onclick="A.stab(&quot;noticias&quot;)">Noticias ('+S.noticias.length+')</button>';
+  h+='<button class="'+(S.siteTab==='leads'?'on':'')+'" onclick="A.stab(&quot;leads&quot;)">Contatos do site'+(novos?' ('+novos+' novos)':' ('+S.leads.length+')')+'</button>';
+  h+='</div>';
+  if(S.siteTab==='noticias'){
+    h+='<div class="actbar"><button class="btn" onclick="A.formNoticia()">Nova noticia</button></div>';
+    h+='<div class="panel">';
+    if(!S.noticias.length)h+='<p class="empty">Nenhuma noticia publicada. A secao de noticias so aparece no site quando houver pelo menos uma publicada.</p>';
+    else{h+='<div class="tblwrap"><table><tr><th>Data</th><th>Titulo</th><th>Fonte</th><th>Situacao</th><th></th></tr>';
+      S.noticias.forEach(function(n){
+        h+='<tr><td style="white-space:nowrap">'+dt(n.data_publicacao)+'</td>';
+        h+='<td><b>'+esc(n.titulo)+'</b>'+(n.destaque?' <span class="chip gold">destaque</span>':'')+(n.resumo?'<br><span style="color:var(--muted);font-size:12.5px">'+esc(n.resumo.slice(0,110))+(n.resumo.length>110?'...':'')+'</span>':'')+'</td>';
+        h+='<td>'+(n.url_fonte?'<a href="'+esc(n.url_fonte)+'" target="_blank">'+esc(n.fonte||'link')+'</a>':esc(n.fonte||'&mdash;'))+'</td>';
+        h+='<td>'+(n.publicado?'<span class="chip ok">No ar</span>':'<span class="chip">Rascunho</span>')+'</td>';
+        h+='<td style="white-space:nowrap"><button class="btn sec mini" onclick="A.formNoticia(&quot;'+n.id+'&quot;)">Editar</button> <button class="btn danger mini" onclick="A.delNoticia(&quot;'+n.id+'&quot;)">Excluir</button></td></tr>';
+      });h+='</table></div>';}
+    h+='<p class="note">As noticias marcadas como <b>No ar</b> aparecem automaticamente no site, da mais recente para a mais antiga (ate 6 na home; destaques primeiro).</p></div>';
+  } else {
+    h+='<div class="panel">';
+    if(!S.leads.length)h+='<p class="empty">Nenhum contato recebido pelo site ainda. O formulario de Fale Conosco grava aqui automaticamente.</p>';
+    else{h+='<div class="tblwrap"><table><tr><th>Recebido</th><th>Nome</th><th>Contato</th><th>Interesse</th><th>Mensagem</th><th>Situacao</th></tr>';
+      S.leads.forEach(function(l){
+        h+='<tr><td style="white-space:nowrap">'+dt(l.criado_em)+'</td>';
+        h+='<td><b>'+esc(l.nome)+'</b>'+(l.cidade?'<br><span style="color:var(--muted);font-size:12.5px">'+esc(l.cidade)+(l.uf?'/'+esc(l.uf):'')+'</span>':'')+'</td>';
+        h+='<td>'+(l.email?'<a href="mailto:'+esc(l.email)+'">'+esc(l.email)+'</a>':'')+(l.telefone?'<br><span class="mono" style="font-size:12.5px">'+esc(l.telefone)+'</span>':'')+'</td>';
+        h+='<td style="font-size:13px">'+esc(l.interesse||'')+'</td>';
+        h+='<td style="font-size:13px;max-width:280px">'+esc(l.mensagem||'')+'</td>';
+        h+='<td><select class="inline" onchange="A.stLead(&quot;'+l.id+'&quot;,this.value)">';
+        Object.keys(STLEAD).forEach(function(k){h+='<option value="'+k+'"'+(l.status===k?' selected':'')+'>'+STLEAD[k][0]+'</option>';});
+        h+='</select></td></tr>';
+      });h+='</table></div>';}
+    h+='</div>';
+  }
+  el('main').innerHTML=h;
+}
+
 // ---------- ADMIN ----------
 async function loadAdmin(){
   var r=await sb.from('usuarios_autorizados').select('*').order('criado_em');
@@ -727,6 +780,40 @@ window.A={
   },
   sair:async function(){await sb.auth.signOut();},
   toggleInativas:function(){S.showInativas=!S.showInativas;loadDash().catch(fail);},
+  stab:function(t){S.siteTab=t;renderSite();},
+  stLead:async function(id,st){
+    try{var r=await sb.from('leads').update({status:st}).eq('id',id);if(r.error)throw r.error;toast('Situacao do contato atualizada.');}catch(e){fail(e);}
+  },
+  formNoticia:function(id){
+    var n=id?S.noticias.filter(function(x){return x.id===id;})[0]:{data_publicacao:new Date().toISOString().slice(0,10),publicado:true};
+    var x='<h2>'+(id?'Editar noticia':'Nova noticia')+'</h2><div class="frm">';
+    x+='<div class="fld full"><label>Titulo *</label><input id="n-tit" value="'+esc(n.titulo||'')+'"></div>';
+    x+='<div class="fld full"><label>Resumo (aparece no card do site)</label><textarea id="n-res">'+esc(n.resumo||'')+'</textarea></div>';
+    x+='<div class="fld"><label>Data da publicacao</label><input id="n-data" type="date" value="'+esc(String(n.data_publicacao||'').slice(0,10))+'"></div>';
+    x+='<div class="fld"><label>Fonte (ex.: Canal Solar)</label><input id="n-fonte" value="'+esc(n.fonte||'')+'"></div>';
+    x+='<div class="fld full"><label>Link da fonte (o card leva para ca)</label><input id="n-url" value="'+esc(n.url_fonte||'')+'" placeholder="https://..."></div>';
+    x+='<div class="fld full"><label>Imagem (URL, opcional)</label><input id="n-img" value="'+esc(n.imagem_url||'')+'" placeholder="https://..."></div>';
+    x+='<div class="fld"><label>Destaque</label><select id="n-dest"><option value="n"'+(n.destaque?'':' selected')+'>Nao</option><option value="s"'+(n.destaque?' selected':'')+'>Sim (aparece primeiro)</option></select></div>';
+    x+='<div class="fld"><label>Situacao</label><select id="n-pub"><option value="s"'+(n.publicado===false?'':' selected')+'>No ar</option><option value="n"'+(n.publicado===false?' selected':'')+'>Rascunho</option></select></div>';
+    x+='</div><div style="margin-top:14px;display:flex;gap:8px"><button class="btn" onclick="A.salvarNoticia('+(id?'&quot;'+id+'&quot;':'null')+')">Salvar</button><button class="btn sec" onclick="A.closeModal()">Cancelar</button></div>';
+    A.modal(x);
+  },
+  salvarNoticia:async function(id){
+    try{
+      var body={titulo:val('n-tit'),resumo:val('n-res')||null,data_publicacao:val('n-data'),fonte:val('n-fonte')||null,
+        url_fonte:val('n-url')||null,imagem_url:val('n-img')||null,destaque:val('n-dest')==='s',publicado:val('n-pub')==='s'};
+      if(!body.titulo)throw new Error('Informe o titulo da noticia.');
+      if(!body.data_publicacao)body.data_publicacao=new Date().toISOString().slice(0,10);
+      if(!id)body.criado_por=S.perfil.email;
+      var r=id?await sb.from('noticias').update(body).eq('id',id):await sb.from('noticias').insert(body);
+      if(r.error)throw r.error;
+      A.closeModal();toast('Noticia salva.');loadSite().catch(fail);
+    }catch(e){fail(e);}
+  },
+  delNoticia:async function(id){
+    if(!window.confirm('Excluir esta noticia? Ela sai do site imediatamente.'))return;
+    try{var r=await sb.from('noticias').delete().eq('id',id);if(r.error)throw r.error;toast('Noticia excluida.');loadSite().catch(fail);}catch(e){fail(e);}
+  },
   cobAba:function(a){S.cobAba=a;S.cobFiltro='receber';loadCobranca().catch(fail);},
   cobFiltro:function(f){S.cobFiltro=f;loadCobranca().catch(fail);},
   utab:function(t){S.usinaTab=t;S.cicloSel=null;renderUsina();},
