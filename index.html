@@ -225,7 +225,7 @@ async function loadDash(){
     else if(!latest[c.usina_id])latest[c.usina_id]=c;
   });
   var ucsCount={};q[5].data.forEach(function(r){if(!r.vigencia_fim)ucsCount[r.usina_id]=(ucsCount[r.usina_id]||0)+1;});
-  var pendCiclo={};q[6].data.forEach(function(x){pendCiclo[x.ciclo_id]=(pendCiclo[x.ciclo_id]||0)+1;});
+  var pendCiclo={};q[6].data.forEach(function(x){if(x.status!=='ok')pendCiclo[x.ciclo_id]=(pendCiclo[x.ciclo_id]||0)+1;});
   var atrasadas=faturas.filter(function(f){return f.status==='vencida'||(f.status==='emitida'&&f.vencimento&&f.vencimento<hojeISO);});
   var atrPorUsina={};atrasadas.forEach(function(f){
     if(!f.ciclos)return;
@@ -257,7 +257,8 @@ async function loadDash(){
   // urgencia: 0=pendencia, 1=data do proximo ciclo chegou, 2=em andamento, 3=faturado, 4=concluido em dia, 5=sem ciclo/sem dia
   var nivel=function(u){
     var c=latest[u.id];
-    var pend=(c?(pendCiclo[c.id]||0):0)+(atrPorUsina[u.id]||0);
+    var atrCic=c?atrasadas.filter(function(f){return f.ciclo_id===c.id;}).length:0;
+    var pend=(c?(pendCiclo[c.id]||0):0)+atrCic;
     if(pend>0)return 0;
     var pi=proxInfo(u);
     if(pi&&pi.overdue)return 1;
@@ -303,6 +304,8 @@ async function loadDash(){
     var aguard=fs.filter(function(f){return f.status==='emitida'&&!(f.vencimento&&f.vencimento<hojeISO);}).length;
     if(atr)pend.push({t:atr+' fatura'+(atr===1?'':'s')+' em atraso',s:'bad'});
     if(aguard)pend.push({t:aguard+' aguardando pagamento',s:'muted'});
+    var antigas=atrasadas.filter(function(f){return f.ciclos&&f.ciclos.usina_id===u.id&&f.ciclo_id!==c.id;}).length;
+    if(antigas)pend.push({t:antigas+' fatura'+(antigas===1?'':'s')+' vencida'+(antigas===1?'':'s')+' de ciclo anterior',s:'bad'});
     return {pct:pct,pend:pend};
   };
 
