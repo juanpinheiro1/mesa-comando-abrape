@@ -54,6 +54,9 @@ main{padding-block:26px 60px}
 .card .meta{font-size:12.5px;color:var(--muted)}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .dot{width:12px;height:12px;min-width:12px;border-radius:50%;display:inline-block}
+.mesnav{display:flex;align-items:center;gap:6px;margin-left:auto;flex-wrap:wrap}
+.mesnav select.inline{font-size:14px;font-weight:600;padding:6px 10px}
+.mesnav .btn.mini[disabled]{opacity:.35;cursor:default}
 .prog{margin:4px 0 2px}
 .prog-top{display:flex;justify-content:space-between;font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:5px}
 .prog-top b{font-size:13px;color:var(--ink);letter-spacing:0;font-variant-numeric:tabular-nums}
@@ -212,11 +215,23 @@ async function loadDash(){
   var docsCiclo={};q[8].data.forEach(function(d){(docsCiclo[d.ciclo_id]=docsCiclo[d.ciclo_id]||[]).push(d);});
   var compsCiclo={};q[9].data.forEach(function(x){(compsCiclo[x.ciclo_id]=compsCiclo[x.ciclo_id]||[]).push(x);});
   var ciclos=q[1].data, faturas=q[2].data, fila=q[4].data;
-  var latest={};ciclos.forEach(function(c){if(!latest[c.usina_id])latest[c.usina_id]=c;});
+  // S.dashMes = null -> painel atual (ciclo mais recente de cada usina); 'YYYY-MM-01' -> ciclos daquele mes
+  var mesesDisp=[];ciclos.forEach(function(c){var m=String(c.mes_referencia).slice(0,10);if(mesesDisp.indexOf(m)<0)mesesDisp.push(m);});
+  mesesDisp.sort().reverse();S.dashMesesDisp=mesesDisp;
+  if(S.dashMes&&mesesDisp.indexOf(S.dashMes)<0)S.dashMes=null;
+  var modoHist=!!S.dashMes;
+  var latest={};ciclos.forEach(function(c){
+    if(modoHist){if(String(c.mes_referencia).slice(0,10)===S.dashMes)latest[c.usina_id]=c;}
+    else if(!latest[c.usina_id])latest[c.usina_id]=c;
+  });
   var ucsCount={};q[5].data.forEach(function(r){if(!r.vigencia_fim)ucsCount[r.usina_id]=(ucsCount[r.usina_id]||0)+1;});
   var pendCiclo={};q[6].data.forEach(function(x){pendCiclo[x.ciclo_id]=(pendCiclo[x.ciclo_id]||0)+1;});
   var atrasadas=faturas.filter(function(f){return f.status==='vencida'||(f.status==='emitida'&&f.vencimento&&f.vencimento<hojeISO);});
-  var atrPorUsina={};atrasadas.forEach(function(f){if(f.ciclos)atrPorUsina[f.ciclos.usina_id]=(atrPorUsina[f.ciclos.usina_id]||0)+1;});
+  var atrPorUsina={};atrasadas.forEach(function(f){
+    if(!f.ciclos)return;
+    if(modoHist){var lc=latest[f.ciclos.usina_id];if(!lc||lc.id!==f.ciclo_id)return;}
+    atrPorUsina[f.ciclos.usina_id]=(atrPorUsina[f.ciclos.usina_id]||0)+1;
+  });
   var fab=faturas.filter(function(f){return f.status==='emitida'||f.status==='vencida';});
   var vab=fab.reduce(function(a,f){return a+Number(f.valor||0);},0);
   var bven=q[3].data.filter(function(b){return b.status==='vencido'||b.status==='expirado';}).length;
@@ -229,6 +244,7 @@ async function loadDash(){
   var dts=function(iso){var p=String(iso).slice(0,10).split('-');return p[2]+'/'+p[1]+'/'+p[0].slice(2);};
   var proxInfo=function(u){
     var c=latest[u.id];
+    if(modoHist)return null;
     if(c&&c.status!=='concluido')return null;
     var datas=[];
     if(u.uc_geradora_id&&ucProx[u.uc_geradora_id])datas.push(ucProx[u.uc_geradora_id]);
@@ -290,7 +306,18 @@ async function loadDash(){
     return {pct:pct,pend:pend};
   };
 
-  var h='<div class="pagehead"><h1>Painel das Usinas</h1><span class="sub">'+MESES[hoje.getMonth()]+'/'+hoje.getFullYear()+'</span></div>';
+  var opcoes=[null].concat(mesesDisp);
+  var idx=opcoes.indexOf(S.dashMes||null);
+  var h='<div class="pagehead"><h1>Painel das Usinas</h1>';
+  h+='<div class="mesnav">';
+  h+='<button class="btn sec mini" title="Mes anterior" '+(idx>=opcoes.length-1?'disabled':'')+' onclick="A.dashMes('+(idx+1)+')">&lsaquo;</button>';
+  h+='<select class="inline" onchange="A.dashMes(this.selectedIndex)">';
+  opcoes.forEach(function(m){h+='<option'+((m||null)===(S.dashMes||null)?' selected':'')+'>'+(m?mesLbl(m):'Atual &mdash; '+MESES[hoje.getMonth()]+'/'+hoje.getFullYear())+'</option>';});
+  h+='</select>';
+  h+='<button class="btn sec mini" title="Proximo mes" '+(idx<=0?'disabled':'')+' onclick="A.dashMes('+(idx-1)+')">&rsaquo;</button>';
+  if(modoHist)h+='<button class="btn mini" onclick="A.dashMes(0)">Voltar ao atual</button>';
+  h+='</div></div>';
+  if(modoHist)h+='<p class="note" style="margin:-6px 0 16px">Painel historico: cada usina mostra o ciclo de <b>'+mesLbl(S.dashMes)+'</b>. Os indicadores de faturas em aberto, atraso e fila continuam globais.</p>';
   h+='<div class="kpis">';
   h+='<div class="kpi"><div class="l">Usinas ativas</div><div class="v">'+ativas.length+'</div></div>';
   h+='<div class="kpi"><div class="l">Ciclos concluidos</div><div class="v">'+conclMes+' / '+ativas.length+'</div><div class="d">no ciclo mais recente de cada usina</div></div>';
@@ -310,9 +337,10 @@ async function loadDash(){
     x+='<div class="meta">'+esc(u.distribuidora)+(u.cidade?' &middot; '+esc(u.cidade)+'/'+esc(u.uf):'')+' &middot; '+(ucsCount[u.id]||0)+' UC'+((ucsCount[u.id]||0)===1?'':'s')+' recebedora'+((ucsCount[u.id]||0)===1?'':'s')+'</div>';
     if(u.ativo){
       if(c){
-        if(c.status==='concluido')x+='<div style="font-size:13px"><span style="color:var(--muted)">Ultimo ciclo processado:</span> <b>'+mesLbl(c.mes_referencia)+'</b></div>';
+        if(modoHist)x+='<div style="font-size:13px"><span style="color:var(--muted)">Ciclo exibido:</span> <b>'+mesLbl(c.mes_referencia)+'</b></div>';
+        else if(c.status==='concluido')x+='<div style="font-size:13px"><span style="color:var(--muted)">Ultimo ciclo processado:</span> <b>'+mesLbl(c.mes_referencia)+'</b></div>';
         else x+='<div style="font-size:13px"><span style="color:var(--muted)">Ciclo em acao:</span> <b>'+mesLbl(c.mes_referencia)+'</b></div>';
-      } else x+='<div style="font-size:13px;color:var(--muted)">Nenhum ciclo aberto</div>';
+      } else x+='<div style="font-size:13px;color:var(--muted)">'+(modoHist?'Sem ciclo neste mes':'Nenhum ciclo aberto')+'</div>';
       var pi=proxInfo(u);
       if(pi){
         if(pi.overdue)x+='<div style="font-size:13px;color:var(--bad)"><b>Proximo ciclo: '+dts(pi.d)+'</b> &mdash; coletar a conta e iniciar!</div>';
@@ -845,6 +873,14 @@ window.A={
   },
   sair:async function(){await sb.auth.signOut();},
   toggleInativas:function(){S.showInativas=!S.showInativas;loadDash().catch(fail);},
+  dashMes:function(i){
+    var sel=document.querySelector('.mesnav select');
+    var n=sel?sel.options.length:1;
+    if(i<0||i>=n)return;
+    S.dashMesIdx=i;
+    S.dashMes=i===0?null:S.dashMesesDisp[i-1];
+    loadDash().catch(fail);
+  },
   stab:function(t){S.siteTab=t;renderSite();},
   stLead:async function(id,st){
     try{var r=await sb.from('leads').update({status:st}).eq('id',id);if(r.error)throw r.error;toast('Situacao do contato atualizada.');}catch(e){fail(e);}
