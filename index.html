@@ -453,6 +453,59 @@ function renderUsina(){
   el('main').innerHTML=h;
   renderUsinaTab();
 }
+function ucsDoCiclo(cs){
+  var mg=String(cs.mes_geracao||cs.mes_referencia).slice(0,10);
+  var vistos={};
+  return (S.u.rateios||[]).filter(function(r){
+    if(!r.ucs||r.ucs.tipo==='geradora')return false;
+    if(r.vigencia_inicio&&String(r.vigencia_inicio).slice(0,10)>mg)return false;
+    if(r.vigencia_fim&&String(r.vigencia_fim).slice(0,10)<mg)return false;
+    if(vistos[r.uc_id])return false;vistos[r.uc_id]=1;return true;
+  }).sort(function(a,b){return Number(b.percentual||0)-Number(a.percentual||0);});
+}
+function ucRot(r){var c=r.ucs&&r.ucs.clientes?r.ucs.clientes.nome:'';return (r.ucs?r.ucs.numero_uc:'')+(c?' - '+c:'');}
+function normTxt(t){return String(t||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();}
+function checklistCiclo(cs,cdocs,comps){
+  var itens=[];
+  var ger=cdocs.filter(function(d){return d.tipo==='conta_geradora'||d.tipo==='demonstrativo_energisa';});
+  var demo=ger.filter(function(d){return d.tipo==='demonstrativo_energisa'||/demonstr/.test(normTxt(d.nome_arquivo));});
+  var conta=ger.filter(function(d){return demo.indexOf(d)<0;});
+  var gid=S.u.usina.uc_geradora_id||'';
+  itens.push({rot:'UC geradora &mdash; conta Energisa',ok:conta.length>0,arq:conta.map(function(d){return d.nome_arquivo;}),uc:gid,tipo:'conta_geradora'});
+  itens.push({rot:'UC geradora &mdash; demonstrativo de compensacao',ok:demo.length>0,arq:demo.map(function(d){return d.nome_arquivo;}),uc:gid,tipo:'demonstrativo_energisa'});
+  var soltas=cdocs.filter(function(d){return d.tipo==='conta_uc_recebedora'&&!d.uc_id;});
+  ucsDoCiclo(cs).forEach(function(r){
+    var lig=cdocs.filter(function(d){return d.tipo==='conta_uc_recebedora'&&d.uc_id===r.uc_id;});
+    var num=String(r.ucs.numero_uc||'').replace(/\D/g,'');
+    var nomeCli=normTxt(r.ucs.clientes?r.ucs.clientes.nome:'');
+    var prov=soltas.filter(function(d){
+      var n=normTxt(d.nome_arquivo),nd=n.replace(/\D/g,'');
+      if(num.length>=6&&nd.indexOf(num.slice(0,7))>-1)return true;
+      var base=n.replace(/\.pdf$/,'').replace(/[^a-z0-9]+/g,' ').trim();
+      if(base.length>=2&&(' '+nomeCli+' ').indexOf(' '+base+' ')>-1)return true;
+      var toks=base.split(' ').filter(function(t){return t.length>=4;});
+      return toks.length>0&&toks.every(function(t){return nomeCli.indexOf(t)>-1;});
+    });
+    var cp=comps.filter(function(x){return x.uc_id===r.uc_id&&x.status==='ok';})[0];
+    var ok=lig.length>0||prov.length>0||!!cp;
+    var arq=lig.map(function(d){return d.nome_arquivo;}).concat(prov.map(function(d){return d.nome_arquivo+' (provavel)';}));
+    if(!ok&&!arq.length&&cp)arq=['apurada'];
+    itens.push({rot:'Conta da UC '+esc(ucRot(r))+' <span style="color:var(--muted)">('+Number(r.percentual||0)+'%)</span>',ok:ok,arq:arq,uc:r.uc_id,tipo:'conta_uc_recebedora',apurada:!!cp&&!lig.length&&!prov.length});
+  });
+  var faltam=itens.filter(function(i){return !i.ok;}).length;
+  var h='<div class="panel" style="margin:0 0 16px;padding:14px 16px;border-color:'+(faltam?'var(--warn, #c98a1b)':'var(--ok, #2e7d4f)')+'">';
+  h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px"><h2 style="margin:0">Documentos do ciclo</h2>';
+  h+=faltam?'<span class="chip warn">Faltam '+faltam+' de '+itens.length+'</span>':'<span class="chip ok">Todos recebidos ('+itens.length+')</span>';
+  h+='</div><div class="tblwrap"><table><tr><th>Documento esperado</th><th>Situacao</th><th>Arquivo</th><th></th></tr>';
+  itens.forEach(function(i){
+    h+='<tr><td>'+i.rot+'</td><td>'+(i.ok?'<span class="chip ok">Recebido</span>':'<span class="chip bad">Falta</span>')+'</td>';
+    h+='<td style="word-break:break-all;color:var(--muted);font-size:12.5px">'+(i.apurada?'apurada sem arquivo vinculado':i.arq.map(esc).join('<br>'))+'</td>';
+    h+='<td style="white-space:nowrap">'+(i.ok?'':'<button class="btn mini" onclick="A.anexarConta(&quot;'+cs.id+'&quot;,&quot;'+i.uc+'&quot;,&quot;'+i.tipo+'&quot;)">Anexar</button>')+'</td></tr>';
+  });
+  h+='</table></div>';
+  if(!ucsDoCiclo(cs).length)h+='<p class="note" style="margin-top:8px">Nenhuma UC recebedora com rateio vigente nesta geracao &mdash; confira a aba UCs &amp; Rateio.</p>';
+  return h+'</div>';
+}
 function renderUsinaTab(){
   var t=S.usinaTab,u=S.u.usina,h='';
   if(t==='ciclos'){
@@ -467,7 +520,13 @@ function renderUsinaTab(){
           ds.forEach(function(d){
             x+='<tr><td style="word-break:break-all">'+esc(d.nome_arquivo)+'</td><td>'+(TIPODOC[d.tipo]||esc(d.tipo))+'</td>';
             if(comEnvio)x+='<td>'+(d.enviado_em?'<span class="chip ok">Enviado '+dt(d.enviado_em)+'</span>'+(d.enviado_para?'<br><span style="color:var(--muted);font-size:11.5px">'+esc(d.enviado_para)+'</span>':''):'<span class="chip warn">Nao enviado</span>')+'</td>';
-            x+='<td style="white-space:nowrap"><button class="btn sec mini" onclick="A.abrirDoc(&quot;'+esc(d.storage_path)+'&quot;)">Abrir</button></td></tr>';
+            var vinc='';
+            if(d.tipo==='conta_uc_recebedora'){
+              var ucsC=ucsDoCiclo(cs);
+              if(!d.uc_id&&ucsC.length){vinc='<select class="mini" onchange="A.vincularDoc(&quot;'+d.id+'&quot;,this.value)"><option value="">Vincular a UC&hellip;</option>'+ucsC.map(function(r){return '<option value="'+r.uc_id+'">'+esc(ucRot(r))+'</option>';}).join('')+'</select> ';}
+              else if(d.uc_id){var rr=ucsC.filter(function(r){return r.uc_id===d.uc_id;})[0];if(rr)vinc='<span class="chip info">'+esc(ucRot(rr))+'</span> ';}
+            }
+            x+='<td style="white-space:nowrap">'+vinc+'<button class="btn sec mini" onclick="A.abrirDoc(&quot;'+esc(d.storage_path)+'&quot;)">Abrir</button></td></tr>';
           });
           return x+'</table></div>';
         };
@@ -508,6 +567,7 @@ function renderUsinaTab(){
         }
         h+='</div>';
         var comps=(S.u.comp||[]).filter(function(x){return x.ciclo_id===cs.id;});
+        h+=checklistCiclo(cs,cdocs,comps);
         h+='<h2>Fechamento por UC</h2>';
         if(!comps.length)h+='<p class="empty" style="padding:6px 0">Sem apuracao registrada neste ciclo.</p>';
         else{h+='<div class="tblwrap"><table><tr><th>UC</th><th>Cliente</th><th class="num">Creditada</th><th class="num">Fatura ABRAPE</th><th class="num">Economia</th><th>Status</th></tr>';
@@ -956,7 +1016,12 @@ window.A={
       toast('Solicitacao registrada na fila do Claude.');loadUsina().catch(fail);
     }catch(e){fail(e);}
   },
-  anexarConta:function(cicloId,ucId){
+  vincularDoc:async function(docId,ucId){
+    if(!ucId)return;
+    try{var r=await sb.from('documentos').update({uc_id:ucId}).eq('id',docId);if(r.error)throw r.error;toast('Conta vinculada a UC.');loadUsina().catch(fail);}catch(e){fail(e);}
+  },
+  anexarConta:function(cicloId,ucId,tipo){
+    tipo=tipo||'conta_uc_recebedora';
     var inp=document.createElement('input');inp.type='file';inp.accept='application/pdf,.pdf';
     inp.onchange=async function(){
       try{
@@ -967,9 +1032,9 @@ window.A={
         var path=S.usinaId+'/'+pasta+'/'+Date.now()+'_'+nome;
         var up=await sb.storage.from('documentos').upload(path,f);
         if(up.error)throw up.error;
-        var r=await sb.from('documentos').insert({usina_id:S.usinaId,ciclo_id:cicloId,uc_id:ucId,tipo:'conta_uc_recebedora',storage_path:path,nome_arquivo:f.name,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email});
+        var r=await sb.from('documentos').insert({usina_id:S.usinaId,ciclo_id:cicloId,uc_id:ucId||null,tipo:tipo,storage_path:path,nome_arquivo:f.name,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email});
         if(r.error)throw r.error;
-        toast('Conta anexada a UC. Item criado na fila do Claude.');loadUsina().catch(fail);
+        toast('Documento anexado. Item criado na fila do Claude.');loadUsina().catch(fail);
       }catch(e){fail(e);}
     };
     inp.click();
