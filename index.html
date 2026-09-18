@@ -388,7 +388,7 @@ async function loadDash(){
     if(pi&&pi.overdue)itens.push({uid:u.id, txt:esc(u.nome)+' &middot; leitura da geradora em '+dts(pi.d)+' &mdash; coletar a conta de energia e iniciar o novo ciclo', tipo:'bad'});
   });
   fila.forEach(function(s){
-    itens.push({uid:s.usina_id, txt:'Fila do Claude: '+({processar:'processar',faturar:'faturar',enviar:'enviar relatorios'}[s.tipo])+' &middot; '+esc(s.usinas?s.usinas.nome:'')+' &middot; ciclo '+(s.ciclos?mesLbl(s.ciclos.mes_referencia):'')+' (solicitado '+dt(s.criado_em)+')', tipo:'gold'});
+    itens.push({uid:s.usina_id, txt:'Fila do Claude: '+({processar:'processar',faturar:'faturar',enviar:'enviar relatorios',novo_documento:'arquivo novo para atualizar'}[s.tipo])+' &middot; '+esc(s.usinas?s.usinas.nome:'')+' &middot; ciclo '+(s.ciclos?mesLbl(s.ciclos.mes_referencia):'')+' (solicitado '+dt(s.criado_em)+')', tipo:'gold'});
   });
   h+='<div class="panel" style="margin-top:22px'+(itens.length?';border-color:var(--warn)':'')+'"><h2>Atencao</h2>';
   if(!itens.length)h+='<p class="empty">Nada exigindo acao no momento &mdash; tudo em dia.</p>';
@@ -476,7 +476,7 @@ function renderUsinaTab(){
         h+='<span style="color:var(--muted);font-size:12.5px">Geracao de '+mesLbl(cs.mes_geracao)+'</span>';
         h+='<button class="btn sec mini" style="margin-left:auto" onclick="A.verCiclo(null)">Fechar detalhe</button></div>';
         var sols=(S.u.sol||[]).filter(function(s){return s.ciclo_id===cs.id;});
-        var TIPOSOL={processar:'Processar o ciclo',faturar:'Aprovar e faturar',enviar:'Enviar relatorios'};
+        var TIPOSOL={processar:'Processar o ciclo',faturar:'Aprovar e faturar',enviar:'Enviar relatorios',novo_documento:'Arquivo novo &mdash; atualizar'};
         var acao=null, hint='';
         if(cs.status==='aberto'||cs.status==='documentos'){acao='processar';hint='O Claude extrai os dados dos documentos enviados, roda o ledger por UC e deixa o ciclo Conferido para revisao.';}
         else if(cs.status==='conferido'){acao='faturar';hint='O Claude gera as faturas (serie geral), os relatorios individuais, o demonstrativo ABRAPE, o dashboard da usina e emite os boletos no Inter.';}
@@ -501,7 +501,8 @@ function renderUsinaTab(){
           h+='<div class="tblwrap" style="margin-top:10px"><table><tr><th>Solicitacao</th><th>Status</th><th>Por</th><th>Quando</th></tr>';
           sols.forEach(function(s){
             var stc=s.status==='pendente'?'warn':s.status==='concluida'?'ok':s.status==='em_execucao'?'info':'';
-            h+='<tr><td>'+TIPOSOL[s.tipo]+'</td><td><span class="chip '+stc+'">'+esc(s.status)+'</span></td><td>'+esc(s.solicitado_por||'')+'</td><td>'+dt(s.criado_em)+'</td></tr>';
+            var arqs='';if(s.tipo==='novo_documento'){try{arqs=(JSON.parse(s.observacoes||'{}').arquivos||[]).map(esc).join(', ');}catch(e){}}
+            h+='<tr><td>'+TIPOSOL[s.tipo]+(arqs?'<br><span style="color:var(--muted);font-size:12px">'+arqs+'</span>':'')+'</td><td><span class="chip '+stc+'">'+esc(s.status)+'</span></td><td>'+esc(s.solicitado_por||'')+'</td><td>'+dt(s.criado_em)+'</td></tr>';
           });
           h+='</table></div>';
         }
@@ -968,7 +969,7 @@ window.A={
         if(up.error)throw up.error;
         var r=await sb.from('documentos').insert({usina_id:S.usinaId,ciclo_id:cicloId,uc_id:ucId,tipo:'conta_uc_recebedora',storage_path:path,nome_arquivo:f.name,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email});
         if(r.error)throw r.error;
-        toast('Conta anexada a UC. O Claude processa na proxima rodada da fila.');loadUsina().catch(fail);
+        toast('Conta anexada a UC. Item criado na fila do Claude.');loadUsina().catch(fail);
       }catch(e){fail(e);}
     };
     inp.click();
