@@ -543,22 +543,55 @@ async function loadClientes(){
   var q=await Promise.all([
     sb.from('clientes').select('*, ucs(id,numero_uc)').order('nome'),
     sb.from('investidores').select('*, usinas(nome)').order('nome'),
-    sb.from('usinas').select('id,nome').order('nome')
+    sb.from('usinas').select('id,nome,ativo').order('nome'),
+    sb.from('rateios').select('usina_id,uc_id,vigencia_fim'),
+    sb.from('ucs').select('id,cliente_id')
   ]);
   for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
   S.cli=q[0].data;S.inv=q[1].data;S.usinas=q[2].data;
+  var ucCli={};q[4].data.forEach(function(u){ucCli[u.id]=u.cliente_id;});
+  var mapa={};
+  q[3].data.forEach(function(r){
+    var cid=ucCli[r.uc_id];if(!cid)return;
+    if(!mapa[cid])mapa[cid]={};
+    if(!mapa[cid][r.usina_id]||!r.vigencia_fim)mapa[cid][r.usina_id]=!r.vigencia_fim;
+  });
+  S.cliUsinas=mapa;
   renderClientes();
 }
 function renderClientes(){
   var h='<div class="pagehead"><h1>Clientes & Investidores</h1></div>';
   h+='<div class="tabs"><button class="'+(S.cliTab==='clientes'?'on':'')+'" onclick="A.ctab(&quot;clientes&quot;)">Clientes</button><button class="'+(S.cliTab==='inv'?'on':'')+'" onclick="A.ctab(&quot;inv&quot;)">Investidores</button></div>';
+  var unome={};S.usinas.forEach(function(u){unome[u.id]=u.nome;});
+  var usinasDoCliente=function(cid){
+    var m=(S.cliUsinas||{})[cid]||{};
+    return Object.keys(m).map(function(uid){return {id:uid,nome:unome[uid]||'?',ativa:m[uid]};})
+      .sort(function(a,b){return a.nome.localeCompare(b.nome);});
+  };
   if(S.cliTab==='clientes'){
-    h+='<div class="actbar"><button class="btn" onclick="A.formCliente()">Novo cliente</button></div>';
+    if(!S.cliUsinaFiltro)S.cliUsinaFiltro='';
+    var lista=S.cli.filter(function(c){
+      if(!S.cliUsinaFiltro)return true;
+      return !!((S.cliUsinas||{})[c.id]||{})[S.cliUsinaFiltro];
+    });
+    h+='<div class="actbar"><button class="btn" onclick="A.formCliente()">Novo cliente</button>';
+    h+='<div class="fld"><label>Filtrar por usina</label><select id="cli-fu" onchange="A.cliUsina(this.value)"><option value="">Todas as usinas ('+S.cli.length+')</option>';
+    S.usinas.forEach(function(u){
+      var n=S.cli.filter(function(c){return !!((S.cliUsinas||{})[c.id]||{})[u.id];}).length;
+      if(n)h+='<option value="'+u.id+'"'+(S.cliUsinaFiltro===u.id?' selected':'')+'>'+esc(u.nome)+' ('+n+')</option>';
+    });
+    h+='</select></div>';
+    if(S.cliUsinaFiltro)h+='<button class="btn sec" onclick="A.cliUsina(&quot;&quot;)">Limpar filtro</button>';
+    h+='</div>';
     h+='<div class="panel">';
     if(!S.cli.length)h+='<p class="empty">Nenhum cliente cadastrado ainda &mdash; serao importados na migracao.</p>';
-    else{h+='<div class="tblwrap"><table><tr><th>Cliente</th><th>Grupo</th><th>CNPJ/CPF</th><th>E-mails</th><th class="num">UCs</th><th></th></tr>';
-      S.cli.forEach(function(c){
-        h+='<tr><td><b>'+esc(c.nome)+'</b></td><td>'+esc(c.grupo||'')+'</td><td class="mono">'+esc(c.cnpj_cpf||'')+'</td>';
+    else if(!lista.length)h+='<p class="empty">Nenhum cliente nesta usina.</p>';
+    else{h+='<div class="tblwrap"><table><tr><th>Cliente</th><th>Usinas</th><th>Grupo</th><th>CNPJ/CPF</th><th>E-mails</th><th class="num">UCs</th><th></th></tr>';
+      lista.forEach(function(c){
+        var us=usinasDoCliente(c.id);
+        h+='<tr><td><b>'+esc(c.nome)+'</b></td>';
+        h+='<td>'+(us.length?us.map(function(x){return '<span class="chip'+(x.ativa?' info':'')+'">'+esc(x.nome.replace(/^Usina /,''))+(x.ativa?'':' (encerrada)')+'</span>';}).join(' '):'&mdash;')+'</td>';
+        h+='<td>'+esc(c.grupo||'')+'</td><td class="mono">'+esc(c.cnpj_cpf||'')+'</td>';
         h+='<td>'+(c.emails&&c.emails.length?c.emails.map(function(e){return '<a href="mailto:'+esc(e)+'">'+esc(e)+'</a>';}).join('<br>'):'&mdash;')+'</td>';
         h+='<td class="num">'+(c.ucs?c.ucs.length:0)+'</td>';
         h+='<td><button class="btn sec mini" onclick="A.formCliente(&quot;'+c.id+'&quot;)">Editar</button></td></tr>';
@@ -756,6 +789,7 @@ window.A={
     try{var r=await sb.from('solicitacoes').update({status:'cancelada',concluido_em:new Date().toISOString()}).eq('id',id);if(r.error)throw r.error;toast('Solicitacao cancelada.');loadUsina().catch(fail);}catch(e){fail(e);}
   },
   ctab:function(t){S.cliTab=t;renderClientes();},
+  cliUsina:function(id){S.cliUsinaFiltro=id;renderClientes();},
   abrirCiclo:async function(){
     try{
       var m=val('nc-mes');if(!m)throw new Error('Escolha o mes de referencia.');
