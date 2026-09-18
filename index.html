@@ -197,6 +197,7 @@ function go(v,arg){
   if(v==='adm')loadAdmin().catch(fail);
 }
 
+var TIPOS_ENVIO=['relatorio_cliente','boleto','relatorio_investidor'];
 // ---------- DASHBOARD ----------
 async function loadDash(){
   var hoje=new Date();
@@ -206,17 +207,20 @@ async function loadDash(){
     sb.from('ciclos').select('*').order('mes_referencia',{ascending:false}),
     sb.from('faturas_abrape').select('id,numero,ano,valor,vencimento,status,ciclo_id, clientes(nome), ciclos(usina_id,mes_referencia)'),
     sb.from('boletos').select('valor,status'),
-    sb.from('solicitacoes').select('id,tipo,ciclo_id,usina_id,criado_em, usinas(nome), ciclos(mes_referencia)').eq('status','pendente'),
+    sb.from('solicitacoes').select('id,tipo,ciclo_id,usina_id,criado_em,observacoes, usinas(nome), ciclos(mes_referencia)').eq('status','pendente'),
     sb.from('rateios').select('usina_id,uc_id,vigencia_fim'),
     sb.from('compensacoes').select('ciclo_id,status').in('status',['pendente','verificar']),
     sb.from('ucs').select('id,proxima_leitura'),
     sb.from('documentos').select('ciclo_id,uc_id,tipo').not('ciclo_id','is',null),
     sb.from('compensacoes').select('ciclo_id,uc_id,status'),
-    sb.from('lembretes').select('*').is('resolvido_em',null).order('criado_em')
+    sb.from('lembretes').select('*').is('resolvido_em',null).order('criado_em'),
+    sb.from('documentos').select('id,nome_arquivo,tipo,ciclo_id,usina_id,uc_id,criado_em, usinas(nome), ciclos(mes_referencia)').is('enviado_em',null).in('tipo',TIPOS_ENVIO).not('ciclo_id','is',null)
   ]);
   for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
   var usinas=q[0].data;S.usinas=usinas;
   var lembretes=q[10].data||[];
+  S.saida=q[11].data||[];
+  S.saidaFila={};q[4].data.forEach(function(x){if(x.tipo==='enviar'){try{(JSON.parse(x.observacoes||'{}').documentos||[]).forEach(function(id){S.saidaFila[id]=1;});}catch(e){}}});
   var docsCiclo={};q[8].data.forEach(function(d){(docsCiclo[d.ciclo_id]=docsCiclo[d.ciclo_id]||[]).push(d);});
   var compsCiclo={};q[9].data.forEach(function(x){(compsCiclo[x.ciclo_id]=compsCiclo[x.ciclo_id]||[]).push(x);});
   var ciclos=q[1].data, faturas=q[2].data, fila=q[4].data;
@@ -331,6 +335,8 @@ async function loadDash(){
   h+='<div class="kpi"><div class="l">Ciclos concluidos</div><div class="v">'+conclMes+' / '+ativas.length+'</div><div class="d">no ciclo mais recente de cada usina</div></div>';
   h+='<div class="kpi"><div class="l">Faturas em aberto</div><div class="v">'+fab.length+'</div><div class="d">'+money(vab)+'</div></div>';
   h+='<div class="kpi"'+(atrasadas.length?' style="border-color:var(--bad)"':'')+'><div class="l">Em atraso</div><div class="v">'+atrasadas.length+'</div><div class="d">faturas vencidas sem pagamento</div></div>';
+  var nSaida=S.saida.filter(function(d){return !S.saidaFila[d.id];}).length, nNaFila=S.saida.length-nSaida;
+  h+='<div class="kpi" style="cursor:pointer;'+(nSaida?'border-color:var(--info, #2f6fb0)':'')+'" onclick="A.caixaSaida()" title="Abrir a caixa de saida"><div class="l">Caixa de saida</div><div class="v">'+nSaida+'</div><div class="d">'+(nSaida?'documento'+(nSaida>1?'s':'')+' sem enviar &mdash; clique para enviar':'nada pendente de envio')+(nNaFila?' &middot; '+nNaFila+' ja na fila':'')+'</div></div>';
   h+='<div class="kpi"'+(fila.length?' style="border-color:var(--gold)"':'')+'><div class="l">Fila do Claude</div><div class="v">'+fila.length+'</div><div class="d">'+(fila.length?'solicitacoes aguardando &mdash; diga &quot;roda a fila&quot;':'nenhuma solicitacao pendente')+'</div></div>';
   h+='</div><div class="grid">';
 
@@ -504,15 +510,21 @@ function checklistCiclo(cs,cdocs,comps){
     if(!ok&&!arq.length&&cp)arq=['apurada'];
     itens.push({rot:'Conta da UC '+esc(ucRot(r))+' <span style="color:var(--muted)">('+Number(r.percentual||0)+'%)</span>',ok:ok,arq:arq,uc:r.uc_id,tipo:'conta_uc_recebedora',apurada:!!cp&&!lig.length&&!prov.length});
   });
-  var faltam=itens.filter(function(i){return !i.ok;}).length;
+  var disp=cs.docs_dispensados||[];
+  itens.forEach(function(i){i.chave=(i.tipo==='conta_uc_recebedora'?'uc:'+i.uc:i.tipo);i.disp=!i.ok&&disp.indexOf(i.chave)>-1;});
+  var faltam=itens.filter(function(i){return !i.ok&&!i.disp;}).length;
   var h='<div class="panel" style="margin:0 0 16px;padding:14px 16px;border-color:'+(faltam?'var(--warn, #c98a1b)':'var(--ok, #2e7d4f)')+'">';
   h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px"><h2 style="margin:0">Documentos do ciclo</h2>';
-  h+=faltam?'<span class="chip warn">Faltam '+faltam+' de '+itens.length+'</span>':'<span class="chip ok">Todos recebidos ('+itens.length+')</span>';
+  var nd=itens.filter(function(i){return i.disp;}).length;
+  h+=faltam?'<span class="chip warn">Faltam '+faltam+' de '+itens.length+'</span>':'<span class="chip ok">Todos recebidos ('+(itens.length-nd)+(nd?' + '+nd+' dispensado'+(nd>1?'s':''):'')+')</span>';
   h+='</div><div class="tblwrap"><table><tr><th>Documento esperado</th><th>Situacao</th><th>Arquivo</th><th></th></tr>';
   itens.forEach(function(i){
-    h+='<tr><td>'+i.rot+'</td><td>'+(i.ok?'<span class="chip ok">Recebido</span>':'<span class="chip bad">Falta</span>')+'</td>';
+    h+='<tr><td>'+i.rot+'</td><td>'+(i.ok?'<span class="chip ok">Recebido</span>':i.disp?'<span class="chip">Dispensado</span>':'<span class="chip bad">Falta</span>')+'</td>';
     h+='<td style="word-break:break-all;color:var(--muted);font-size:12.5px">'+(i.apurada?'apurada sem arquivo vinculado':i.arq.map(esc).join('<br>'))+'</td>';
-    h+='<td style="white-space:nowrap">'+(i.ok?'':'<button class="btn mini" onclick="A.anexarConta(&quot;'+cs.id+'&quot;,&quot;'+i.uc+'&quot;,&quot;'+i.tipo+'&quot;)">Anexar</button>')+'</td></tr>';
+    var bt='';
+    if(!i.ok&&!i.disp)bt='<button class="btn mini" onclick="A.anexarConta(&quot;'+cs.id+'&quot;,&quot;'+i.uc+'&quot;,&quot;'+i.tipo+'&quot;)">Anexar</button> <button class="btn sec mini" title="Nao sera enviado neste ciclo" onclick="A.dispensarDoc(&quot;'+cs.id+'&quot;,&quot;'+i.chave+'&quot;,true)">Dispensar</button>';
+    else if(i.disp)bt='<button class="btn sec mini" onclick="A.dispensarDoc(&quot;'+cs.id+'&quot;,&quot;'+i.chave+'&quot;,false)">Desfazer</button>';
+    h+='<td style="white-space:nowrap">'+bt+'</td></tr>';
   });
   h+='</table></div>';
   if(!ucsDoCiclo(cs).length)h+='<p class="note" style="margin-top:8px">Nenhuma UC recebedora com rateio vigente nesta geracao &mdash; confira a aba UCs &amp; Rateio.</p>';
@@ -1058,6 +1070,43 @@ window.A={
       }catch(e){fail(e);}
     };
     inp.click();
+  },
+  caixaSaida:function(){
+    var ds=(S.saida||[]).filter(function(d){return !S.saidaFila[d.id];});
+    var x='<h2>Caixa de saida</h2>';
+    if(!ds.length){x+='<p class="empty">Nenhum documento pendente de envio.</p><div style="margin-top:14px"><button class="btn sec" onclick="A.closeModal()">Fechar</button></div>';A.modal(x);return;}
+    x+='<p class="note" style="margin-bottom:12px">Relatorios e boletos ainda nao enviados aos clientes/investidores. Desmarque o que nao deve sair agora. Ao confirmar, o envio entra na fila do Claude (diga &quot;roda a fila&quot;).</p>';
+    var grupos={},ordem=[];
+    ds.forEach(function(d){var k=d.ciclo_id;if(!grupos[k]){grupos[k]=[];ordem.push(k);}grupos[k].push(d);});
+    ordem.sort(function(a,b){var ga=grupos[a][0],gb=grupos[b][0];return String(ga.usinas?ga.usinas.nome:'').localeCompare(String(gb.usinas?gb.usinas.nome:''))||String(gb.ciclos?gb.ciclos.mes_referencia:'').localeCompare(String(ga.ciclos?ga.ciclos.mes_referencia:''));});
+    x+='<div class="tblwrap" style="max-height:55vh;overflow:auto"><table><tr><th><input type="checkbox" checked onchange="A.saidaTodos(this.checked)"></th><th>Documento</th><th>Tipo</th></tr>';
+    ordem.forEach(function(k){var g=grupos[k],d0=g[0];
+      x+='<tr><td colspan="3" style="background:var(--surface2);font-weight:600">'+esc(d0.usinas?d0.usinas.nome:'')+' &middot; ciclo '+(d0.ciclos?mesLbl(d0.ciclos.mes_referencia):'')+' <span style="color:var(--muted);font-weight:400">('+g.length+')</span></td></tr>';
+      g.forEach(function(d){x+='<tr><td><input type="checkbox" class="saida_cb" data-id="'+d.id+'" data-ciclo="'+d.ciclo_id+'" data-usina="'+d.usina_id+'" checked></td><td style="word-break:break-all">'+esc(d.nome_arquivo)+'</td><td>'+(TIPODOC[d.tipo]||esc(d.tipo))+'</td></tr>';});
+    });
+    x+='</table></div>';
+    x+='<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="A.enviarSaida()">Enviar selecionados</button><button class="btn sec" onclick="A.closeModal()">Cancelar</button></div>';
+    A.modal(x);
+  },
+  saidaTodos:function(v){document.querySelectorAll('.saida_cb').forEach(function(c){c.checked=v;});},
+  enviarSaida:async function(){
+    try{
+      var por={};
+      document.querySelectorAll('.saida_cb').forEach(function(c){if(c.checked){var k=c.getAttribute('data-ciclo');(por[k]=por[k]||{usina:c.getAttribute('data-usina'),ids:[]}).ids.push(c.getAttribute('data-id'));}});
+      var ks=Object.keys(por);if(!ks.length)throw new Error('Nenhum documento selecionado.');
+      var n=0,rows=ks.map(function(k){n+=por[k].ids.length;return {usina_id:por[k].usina,ciclo_id:k,tipo:'enviar',solicitado_por:S.perfil.email,observacoes:JSON.stringify({documentos:por[k].ids,origem:'caixa_saida'})};});
+      var r=await sb.from('solicitacoes').insert(rows);if(r.error)throw r.error;
+      A.closeModal();toast(n+' documento(s) na fila do Claude ('+ks.length+' ciclo'+(ks.length>1?'s':'')+'). Diga "roda a fila".');loadDash().catch(fail);
+    }catch(e){fail(e);}
+  },
+  dispensarDoc:async function(cicloId,chave,dispensar){
+    try{
+      var cs=S.u.ciclos.filter(function(c){return c.id===cicloId;})[0];
+      var arr=(cs&&cs.docs_dispensados||[]).filter(function(k){return k!==chave;});
+      if(dispensar){if(!window.confirm('Dispensar este documento neste ciclo? Ele deixa de contar como pendencia.'))return;arr.push(chave);}
+      var r=await sb.from('ciclos').update({docs_dispensados:arr}).eq('id',cicloId);if(r.error)throw r.error;
+      toast(dispensar?'Documento dispensado neste ciclo.':'Dispensa desfeita.');loadUsina().catch(fail);
+    }catch(e){fail(e);}
   },
   modalEnvio:function(cicloId){
     var ds=S.u.docs.filter(function(d){return d.ciclo_id===cicloId&&['relatorio_cliente','boleto','relatorio_investidor','demonstrativo_abrape'].indexOf(d.tipo)>-1;});
