@@ -211,10 +211,12 @@ async function loadDash(){
     sb.from('compensacoes').select('ciclo_id,status').in('status',['pendente','verificar']),
     sb.from('ucs').select('id,proxima_leitura'),
     sb.from('documentos').select('ciclo_id,uc_id,tipo').not('ciclo_id','is',null),
-    sb.from('compensacoes').select('ciclo_id,uc_id,status')
+    sb.from('compensacoes').select('ciclo_id,uc_id,status'),
+    sb.from('lembretes').select('*').is('resolvido_em',null).order('criado_em')
   ]);
   for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
   var usinas=q[0].data;S.usinas=usinas;
+  var lembretes=q[10].data||[];
   var docsCiclo={};q[8].data.forEach(function(d){(docsCiclo[d.ciclo_id]=docsCiclo[d.ciclo_id]||[]).push(d);});
   var compsCiclo={};q[9].data.forEach(function(x){(compsCiclo[x.ciclo_id]=compsCiclo[x.ciclo_id]||[]).push(x);});
   var ciclos=q[1].data, faturas=q[2].data, fila=q[4].data;
@@ -377,6 +379,10 @@ async function loadDash(){
 
   // ---- bloco Atencao (abaixo dos cards) ----
   var itens=[];
+  lembretes.forEach(function(l){
+    var un=usinas.filter(function(u){return u.id===l.usina_id;})[0];
+    itens.push({uid:l.usina_id, lid:l.id, txt:'<b>Lembrete'+(un?' &middot; '+esc(un.nome):'')+':</b> '+esc(l.texto)+' <span style="color:var(--muted);font-size:12px">('+dt(l.criado_em)+')</span>', tipo:'info'});
+  });
   atrasadas.forEach(function(f){
     var un=usinas.filter(function(u){return f.ciclos&&u.id===f.ciclos.usina_id;})[0];
     itens.push({uid:un?un.id:null, txt:'Fatura '+(f.numero?f.numero+'/'+f.ano:'s/n')+' &middot; '+esc(f.clientes?f.clientes.nome:'')+' &middot; '+money(f.valor)+' &middot; venceu '+dt(f.vencimento)+(un?' &mdash; '+esc(un.nome):''), tipo:'bad'});
@@ -390,12 +396,12 @@ async function loadDash(){
   fila.forEach(function(s){
     itens.push({uid:s.usina_id, txt:'Fila do Claude: '+({processar:'processar',faturar:'faturar',enviar:'enviar relatorios',novo_documento:'arquivo novo para atualizar'}[s.tipo])+' &middot; '+esc(s.usinas?s.usinas.nome:'')+' &middot; ciclo '+(s.ciclos?mesLbl(s.ciclos.mes_referencia):'')+' (solicitado '+dt(s.criado_em)+')', tipo:'gold'});
   });
-  h+='<div class="panel" style="margin-top:22px'+(itens.length?';border-color:var(--warn)':'')+'"><h2>Atencao</h2>';
+  h+='<div class="panel" style="margin-top:22px'+(itens.length?';border-color:var(--warn)':'')+'"><div style="display:flex;align-items:center;gap:10px"><h2 style="margin:0">Atencao</h2><button class="btn sec mini" style="margin-left:auto" onclick="A.novoLembrete(null)">+ Lembrete</button></div><div style="height:10px"></div>';
   if(!itens.length)h+='<p class="empty">Nada exigindo acao no momento &mdash; tudo em dia.</p>';
   else{h+='<div class="tblwrap"><table>';
     itens.forEach(function(it){
-      h+='<tr><td style="width:14px"><span class="dot" style="background:var(--'+(it.tipo==='bad'?'bad':it.tipo==='warn'?'warn':'gold')+')"></span></td><td>'+it.txt+'</td>';
-      h+='<td style="white-space:nowrap">'+(it.uid?'<button class="btn sec mini" onclick="go(&quot;usina&quot;,&quot;'+it.uid+'&quot;)">Abrir</button>':'')+'</td></tr>';
+      h+='<tr><td style="width:14px"><span class="dot" style="background:var(--'+(it.tipo==='bad'?'bad':it.tipo==='warn'?'warn':it.tipo==='info'?'info, #2f6fb0':'gold')+')"></span></td><td>'+it.txt+'</td>';
+      h+='<td style="white-space:nowrap">'+(it.lid?'<button class="btn sec mini" onclick="A.resolverLembrete(&quot;'+it.lid+'&quot;)">Resolvido</button> ':'')+(it.uid?'<button class="btn sec mini" onclick="go(&quot;usina&quot;,&quot;'+it.uid+'&quot;)">Abrir</button>':'')+'</td></tr>';
     });h+='</table></div>';}
   h+='</div>';
 
@@ -424,10 +430,11 @@ async function loadUsina(){
     sb.from('documentos').select('*, ciclos(mes_referencia)').eq('usina_id',id).order('criado_em',{ascending:false}),
     sb.from('clientes').select('id,nome').order('nome'),
     sb.from('compensacoes').select('*, ucs(numero_uc,clientes(nome)), ciclos!inner(usina_id)').eq('ciclos.usina_id',id),
-    sb.from('solicitacoes').select('*').eq('usina_id',id).order('criado_em',{ascending:false})
+    sb.from('solicitacoes').select('*').eq('usina_id',id).order('criado_em',{ascending:false}),
+    sb.from('lembretes').select('*').eq('usina_id',id).is('resolvido_em',null).order('criado_em')
   ]);
   for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
-  S.u={usina:q[0].data,ciclos:q[1].data,rateios:q[2].data,cond:q[3].data,ger:q[4].data,docs:q[5].data,comp:q[7].data,sol:q[8].data};
+  S.u={usina:q[0].data,ciclos:q[1].data,rateios:q[2].data,cond:q[3].data,ger:q[4].data,docs:q[5].data,comp:q[7].data,sol:q[8].data,lemb:q[9].data||[]};
   S.clientes=q[6].data;
   var fr=await sb.from('faturas_abrape').select('*, clientes(nome), ciclos!inner(usina_id,mes_referencia)').eq('ciclos.usina_id',id).order('criado_em',{ascending:false});
   if(fr.error)throw fr.error;
@@ -444,7 +451,12 @@ function renderUsina(){
   var h='<div class="pagehead"><button class="btn sec mini" onclick="go(&quot;dash&quot;)">&larr; Painel</button><h1>'+esc(u.nome)+'</h1>';
   h+='<div class="chips"><span class="chip '+(u.modelo==='autoconsumo'?'info':'')+'">'+(u.modelo==='autoconsumo'?'Autoconsumo':'Distribuicao')+'</span>';
   if(u.tem_investidor)h+='<span class="chip gold">Investidor</span>';
-  h+='</div></div>';
+  h+='</div><button class="btn sec mini" style="margin-left:auto" onclick="A.novoLembrete(&quot;'+u.id+'&quot;)">+ Lembrete</button></div>';
+  if(S.u.lemb.length){
+    h+='<div class="panel" style="border-color:var(--info, #2f6fb0);padding:12px 16px;margin-bottom:14px"><div style="font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:6px">Lembretes</div>';
+    S.u.lemb.forEach(function(l){h+='<div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--line)"><div style="flex:1">'+esc(l.texto)+' <span style="color:var(--muted);font-size:12px">('+dt(l.criado_em)+(l.criado_por?' &middot; '+esc(l.criado_por):'')+')</span></div><button class="btn sec mini" onclick="A.resolverLembrete(&quot;'+l.id+'&quot;)">Resolvido</button></div>';});
+    h+='</div>';
+  }
   h+='<div class="tabs">';
   [['ciclos','Ciclos'],['cadastro','Cadastro'],['ucs','UCs & Rateio'],['docs','Documentos'],['fat','Faturas']].forEach(function(t){
     h+='<button class="'+(S.usinaTab===t[0]?'on':'')+'" onclick="A.utab(&quot;'+t[0]+'&quot;)">'+t[1]+'</button>';
@@ -1015,6 +1027,14 @@ window.A={
       if(r.error)throw r.error;
       toast('Solicitacao registrada na fila do Claude.');loadUsina().catch(fail);
     }catch(e){fail(e);}
+  },
+  novoLembrete:async function(usinaId){
+    var t=window.prompt('Texto do lembrete:');if(!t||!t.trim())return;
+    try{var r=await sb.from('lembretes').insert({usina_id:usinaId||null,texto:t.trim(),criado_por:S.perfil.email});if(r.error)throw r.error;toast('Lembrete criado.');if(S.view==='usina')loadUsina().catch(fail);else loadDash().catch(fail);}catch(e){fail(e);}
+  },
+  resolverLembrete:async function(id){
+    if(!window.confirm('Marcar este lembrete como resolvido?'))return;
+    try{var r=await sb.from('lembretes').update({resolvido_em:new Date().toISOString(),resolvido_por:S.perfil.email}).eq('id',id);if(r.error)throw r.error;toast('Lembrete resolvido.');if(S.view==='usina')loadUsina().catch(fail);else loadDash().catch(fail);}catch(e){fail(e);}
   },
   vincularDoc:async function(docId,ucId){
     if(!ucId)return;
