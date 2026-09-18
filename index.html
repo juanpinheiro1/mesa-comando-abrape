@@ -54,6 +54,18 @@ main{padding-block:26px 60px}
 .card .meta{font-size:12.5px;color:var(--muted)}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .dot{width:12px;height:12px;min-width:12px;border-radius:50%;display:inline-block}
+.prog{margin:4px 0 2px}
+.prog-top{display:flex;justify-content:space-between;font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:5px}
+.prog-top b{font-size:13px;color:var(--ink);letter-spacing:0;font-variant-numeric:tabular-nums}
+.prog-bar{height:8px;border-radius:99px;background:color-mix(in srgb, var(--ink) 10%, transparent);overflow:hidden}
+.prog-bar div{height:100%;border-radius:99px;transition:width .4s ease}
+.prog-pend{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:3px;font-size:12.5px}
+.prog-pend li{display:flex;align-items:center;gap:7px}
+.prog-pend li::before{content:'';width:6px;height:6px;border-radius:50%;flex-shrink:0;background:var(--muted)}
+.prog-pend li.bad{color:var(--bad)}.prog-pend li.bad::before{background:var(--bad)}
+.prog-pend li.warn{color:var(--warn)}.prog-pend li.warn::before{background:var(--warn)}
+.prog-pend li.muted{color:var(--muted)}
+.prog-ok{margin-top:7px;font-size:12.5px;color:var(--ok)}
 .chip{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:99px;background:var(--chip-mut);color:var(--muted);letter-spacing:.02em}
 .chip.ok{background:var(--chip-ok);color:var(--ok)}
 .chip.warn{background:var(--chip-warn);color:var(--warn)}
@@ -186,15 +198,19 @@ async function loadDash(){
   var q=await Promise.all([
     sb.from('usinas').select('*').order('nome'),
     sb.from('ciclos').select('*').order('mes_referencia',{ascending:false}),
-    sb.from('faturas_abrape').select('id,numero,ano,valor,vencimento,status, clientes(nome), ciclos(usina_id,mes_referencia)'),
+    sb.from('faturas_abrape').select('id,numero,ano,valor,vencimento,status,ciclo_id, clientes(nome), ciclos(usina_id,mes_referencia)'),
     sb.from('boletos').select('valor,status'),
     sb.from('solicitacoes').select('id,tipo,ciclo_id,usina_id,criado_em, usinas(nome), ciclos(mes_referencia)').eq('status','pendente'),
     sb.from('rateios').select('usina_id,uc_id,vigencia_fim'),
     sb.from('compensacoes').select('ciclo_id,status').in('status',['pendente','verificar']),
-    sb.from('ucs').select('id,proxima_leitura')
+    sb.from('ucs').select('id,proxima_leitura'),
+    sb.from('documentos').select('ciclo_id,uc_id,tipo').not('ciclo_id','is',null),
+    sb.from('compensacoes').select('ciclo_id,uc_id,status')
   ]);
   for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
   var usinas=q[0].data;S.usinas=usinas;
+  var docsCiclo={};q[8].data.forEach(function(d){(docsCiclo[d.ciclo_id]=docsCiclo[d.ciclo_id]||[]).push(d);});
+  var compsCiclo={};q[9].data.forEach(function(x){(compsCiclo[x.ciclo_id]=compsCiclo[x.ciclo_id]||[]).push(x);});
   var ciclos=q[1].data, faturas=q[2].data, fila=q[4].data;
   var latest={};ciclos.forEach(function(c){if(!latest[c.usina_id])latest[c.usina_id]=c;});
   var ucsCount={};q[5].data.forEach(function(r){if(!r.vigencia_fim)ucsCount[r.usina_id]=(ucsCount[r.usina_id]||0)+1;});
@@ -236,6 +252,44 @@ async function loadDash(){
   };
   var CORLUZ=['var(--bad)','var(--bad)','var(--warn)','var(--ok)','var(--ok)','var(--muted)'];
 
+  // progresso do ciclo: media de 5 etapas (conta geradora, contas das UCs, apuracao, faturamento, recebimento)
+  var progresso=function(u){
+    var c=latest[u.id];
+    if(!c)return null;
+    var ds=docsCiclo[c.id]||[], cs=compsCiclo[c.id]||[];
+    var pend=[];
+    var temGer=u.modelo==='autoconsumo'
+      ? ds.some(function(d){return d.tipo==='conta_uc_recebedora'||d.tipo==='conta_geradora';})
+      : ds.some(function(d){return d.tipo==='conta_geradora'||d.tipo==='demonstrativo_energisa';});
+    var ucsEsperadas=cs.length?cs.map(function(x){return x.uc_id;}):(ucsDaUsina[u.id]||[]);
+    var comConta=ucsEsperadas.filter(function(uid){
+      return ds.some(function(d){return d.uc_id===uid&&d.tipo==='conta_uc_recebedora';})||cs.some(function(x){return x.uc_id===uid&&x.status==='ok';});
+    }).length;
+    var fContas=ucsEsperadas.length?comConta/ucsEsperadas.length:0;
+    var ok=cs.filter(function(x){return x.status==='ok';}).length;
+    var fApur=cs.length?ok/cs.length:0;
+    var fFat=(c.status==='faturado'||c.status==='concluido')?1:0;
+    var fs=faturas.filter(function(f){return f.ciclo_id===c.id&&f.status!=='cancelada';});
+    var pagas=fs.filter(function(f){return f.status==='paga';}).length;
+    var fRec=fs.length?pagas/fs.length:(c.status==='concluido'?1:0);
+    var pct=Math.round(((temGer?1:0)+fContas+fApur+fFat+fRec)/5*100);
+    if(c.status==='concluido')pct=100;
+    if(c.status!=='concluido'){
+      if(!temGer)pend.push({t:u.modelo==='autoconsumo'?'Conta de energia pendente':'Conta da geradora pendente',s:'bad'});
+      var semConta=ucsEsperadas.length-comConta;
+      if(semConta>0)pend.push({t:semConta+' conta'+(semConta===1?'':'s')+' de UC pendente'+(semConta===1?'':'s'),s:'bad'});
+      var aVer=cs.length-ok;
+      if(aVer>0)pend.push({t:aVer+' UC'+(aVer===1?'':'s')+' a verificar',s:'bad'});
+      if(!fFat&&cs.length&&!aVer&&!semConta)pend.push({t:'Pronto para faturar',s:'warn'});
+      else if(!fFat)pend.push({t:'Faturamento pendente',s:'warn'});
+    }
+    var atr=fs.filter(function(f){return f.status==='vencida'||(f.status==='emitida'&&f.vencimento&&f.vencimento<hojeISO);}).length;
+    var aguard=fs.filter(function(f){return f.status==='emitida'&&!(f.vencimento&&f.vencimento<hojeISO);}).length;
+    if(atr)pend.push({t:atr+' fatura'+(atr===1?'':'s')+' em atraso',s:'bad'});
+    if(aguard)pend.push({t:aguard+' aguardando pagamento',s:'muted'});
+    return {pct:pct,pend:pend};
+  };
+
   var h='<div class="pagehead"><h1>Painel das Usinas</h1><span class="sub">'+MESES[hoje.getMonth()]+'/'+hoje.getFullYear()+'</span></div>';
   h+='<div class="kpis">';
   h+='<div class="kpi"><div class="l">Usinas ativas</div><div class="v">'+ativas.length+'</div></div>';
@@ -265,12 +319,23 @@ async function loadDash(){
         else x+='<div style="font-size:13px"><span style="color:var(--muted)">Proximo ciclo:</span> <b>'+dts(pi.d)+'</b> <span style="color:var(--muted);font-size:11.5px">(leitura da geradora)</span></div>';
       }
     }
+    if(u.ativo){
+      var pg=progresso(u);
+      if(pg){
+        x+='<div class="prog"><div class="prog-top"><span>Progresso do ciclo</span><b>'+pg.pct+'%</b></div>';
+        x+='<div class="prog-bar"><div style="width:'+pg.pct+'%;background:'+cor+'"></div></div>';
+        if(pg.pend.length){
+          x+='<ul class="prog-pend">';
+          pg.pend.forEach(function(p){x+='<li class="'+p.s+'">'+esc(p.t)+'</li>';});
+          x+='</ul>';
+        } else if(pg.pct===100) x+='<div class="prog-ok">Tudo concluido neste ciclo</div>';
+        x+='</div>';
+      }
+    }
     x+='<div class="chips"><span class="chip '+(u.modelo==='autoconsumo'?'info':'')+'">'+(u.modelo==='autoconsumo'?'Autoconsumo':'Distribuicao')+'</span>';
     if(u.tem_investidor)x+='<span class="chip gold">Investidor</span>';
     if(u.ativo&&c)x+=chip(STCICLO,c.status);
     if(!u.ativo)x+='<span class="chip">Inativa</span>';
-    if(pend)x+='<span class="chip bad">'+pend+' UC'+(pend===1?'':'s')+' a verificar</span>';
-    if(atr)x+='<span class="chip bad">'+atr+' fatura'+(atr===1?'':'s')+' em atraso</span>';
     return x+'</div></div>';
   };
   ativas.slice().sort(function(a,b){var d=nivel(a)-nivel(b);return d!==0?d:a.nome.localeCompare(b.nome);}).forEach(function(u){h+=cardUsina(u);});
