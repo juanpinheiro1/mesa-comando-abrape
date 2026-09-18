@@ -603,43 +603,46 @@ async function loadCobranca(){
   h+='<div class="kpi"><div class="l">Total a Receber</div><div class="v">'+money(soma(grupos.receber)+soma(grupos.vencidas))+'</div><div class="d">no prazo + vencidas</div></div>';
   h+='<div class="kpi"><div class="l">Pagas</div><div class="v">'+money(soma(grupos.pagas))+'</div><div class="d">'+grupos.pagas.length+' faturas quitadas</div></div>';
   h+='</div>';
-  h+='<div class="panel"><h2>Faturas</h2>';
+  var classeB=function(b){
+    if(b.status==='pago')return 'pagas';
+    if(b.status==='cancelado')return 'canceladas';
+    if(b.status==='vencido'||b.status==='expirado'||(b.vencimento&&b.vencimento<hojeISO))return 'vencidas';
+    return 'receber';
+  };
+  var gb={receber:[],vencidas:[],canceladas:[],pagas:[]};
+  bol.forEach(function(b){gb[classeB(b)].push(b);});
+  if(!S.cobAba)S.cobAba='faturas';
   if(!S.cobFiltro)S.cobFiltro='receber';
-  var FILTROS=[['receber','A receber'],['vencidas','Vencidas'],['canceladas','Canceladas'],['pagas','Pagas']];
+  var ehFat=S.cobAba==='faturas';
+  var gr=ehFat?grupos:gb;
+
+  h+='<div class="panel">';
+  h+='<div class="tabs" style="margin-bottom:16px">';
+  h+='<button class="'+(ehFat?'on':'')+'" onclick="A.cobAba(&quot;faturas&quot;)">Faturas ABRAPE ('+fat.length+')</button>';
+  h+='<button class="'+(ehFat?'':'on')+'" onclick="A.cobAba(&quot;boletos&quot;)">Boletos Banco Inter ('+bol.length+')</button>';
+  h+='</div>';
+  var FILTROS=ehFat
+    ?[['receber','A receber'],['vencidas','Vencidas'],['canceladas','Canceladas'],['pagas','Pagas']]
+    :[['receber','A receber'],['vencidas','Vencidos'],['canceladas','Cancelados'],['pagas','Pagos']];
   h+='<div class="switch" style="max-width:520px;margin-bottom:14px">';
   FILTROS.forEach(function(ft){
-    h+='<button class="'+(S.cobFiltro===ft[0]?'on':'')+'" onclick="A.cobFiltro(&quot;'+ft[0]+'&quot;)">'+ft[1]+' ('+grupos[ft[0]].length+')</button>';
+    h+='<button class="'+(S.cobFiltro===ft[0]?'on':'')+'" onclick="A.cobFiltro(&quot;'+ft[0]+'&quot;)">'+ft[1]+' ('+gr[ft[0]].length+')</button>';
   });
   h+='</div>';
-  var lista=grupos[S.cobFiltro]||[];
-  if(!lista.length)h+='<p class="empty">Nenhuma fatura neste filtro.</p>';
-  else{h+='<div class="tblwrap"><table><tr><th>Fatura</th><th>Usina</th><th>Ciclo</th><th>Cliente</th><th class="num">Valor</th><th>Venc.</th><th>Status</th></tr>';
-    lista.slice().sort(function(a,b){return String(a.vencimento||'').localeCompare(String(b.vencimento||''));}).forEach(function(f){
-      h+='<tr><td><b>'+(f.numero?f.numero+'/'+f.ano:'s/n')+'</b></td><td>'+esc(f.ciclos&&f.ciclos.usinas?f.ciclos.usinas.nome:'&mdash;')+'</td><td>'+(f.ciclos?mesLbl(f.ciclos.mes_referencia):'&mdash;')+'</td><td>'+esc(f.clientes?f.clientes.nome:'&mdash;')+'</td><td class="num">'+money(f.valor)+'</td><td>'+dt(f.vencimento)+'</td><td>'+(classe(f)==='vencidas'?'<span class="chip bad">Vencida</span>':chip(STFAT,f.status))+'</td></tr>';
-    });h+='</table></div>';}
-  h+='</div>';
-  h+='<div class="panel"><h2>Boletos Banco Inter</h2>';
-  if(!bol.length)h+='<p class="empty">Nenhum boleto registrado. A triagem do Inter passara a gravar aqui automaticamente.</p>';
-  else{
-    var classeB=function(b){
-      if(b.status==='pago')return 'pagas';
-      if(b.status==='cancelado')return 'canceladas';
-      if(b.status==='vencido'||b.status==='expirado'||(b.vencimento&&b.vencimento<hojeISO))return 'vencidas';
-      return 'receber';
-    };
-    var gb={receber:[],vencidas:[],canceladas:[],pagas:[]};
-    bol.forEach(function(b){gb[classeB(b)].push(b);});
-    if(!S.bolFiltro)S.bolFiltro='receber';
-    var FB=[['receber','A receber'],['vencidas','Vencidos'],['canceladas','Cancelados'],['pagas','Pagos']];
-    h+='<div class="switch" style="max-width:520px;margin-bottom:14px">';
-    FB.forEach(function(ft){
-      h+='<button class="'+(S.bolFiltro===ft[0]?'on':'')+'" onclick="A.bolFiltro(&quot;'+ft[0]+'&quot;)">'+ft[1]+' ('+gb[ft[0]].length+')</button>';
-    });
-    h+='</div>';
-    var lb=gb[S.bolFiltro]||[];
-    if(!lb.length)h+='<p class="empty">Nenhum boleto neste filtro.</p>';
+  var lista=(gr[S.cobFiltro]||[]).slice().sort(function(a,b){return String(a.vencimento||'').localeCompare(String(b.vencimento||''));});
+
+  if(ehFat){
+    if(!fat.length)h+='<p class="empty">Nenhuma fatura registrada ainda.</p>';
+    else if(!lista.length)h+='<p class="empty">Nenhuma fatura neste filtro.</p>';
+    else{h+='<div class="tblwrap"><table><tr><th>Fatura</th><th>Usina</th><th>Ciclo</th><th>Cliente</th><th class="num">Valor</th><th>Venc.</th><th>Status</th></tr>';
+      lista.forEach(function(f){
+        h+='<tr><td><b>'+(f.numero?f.numero+'/'+f.ano:'s/n')+'</b></td><td>'+esc(f.ciclos&&f.ciclos.usinas?f.ciclos.usinas.nome:'&mdash;')+'</td><td>'+(f.ciclos?mesLbl(f.ciclos.mes_referencia):'&mdash;')+'</td><td>'+esc(f.clientes?f.clientes.nome:'&mdash;')+'</td><td class="num">'+money(f.valor)+'</td><td>'+dt(f.vencimento)+'</td><td>'+(classe(f)==='vencidas'?'<span class="chip bad">Vencida</span>':chip(STFAT,f.status))+'</td></tr>';
+      });h+='</table></div>';}
+  } else {
+    if(!bol.length)h+='<p class="empty">Nenhum boleto registrado. A triagem do Inter passara a gravar aqui automaticamente.</p>';
+    else if(!lista.length)h+='<p class="empty">Nenhum boleto neste filtro.</p>';
     else{h+='<div class="tblwrap"><table><tr><th>Nosso numero</th><th>Fatura</th><th>Cliente</th><th class="num">Valor</th><th>Venc.</th><th>Status</th><th class="num">Recebido</th></tr>';
-      lb.slice().sort(function(a,b){return String(a.vencimento||'').localeCompare(String(b.vencimento||''));}).forEach(function(b){
+      lista.forEach(function(b){
         h+='<tr><td class="mono">'+esc(b.nosso_numero||'')+'</td><td>'+(b.faturas_abrape?b.faturas_abrape.numero+'/'+b.faturas_abrape.ano:'&mdash;')+'</td><td>'+esc(b.faturas_abrape&&b.faturas_abrape.clientes?b.faturas_abrape.clientes.nome:'&mdash;')+'</td><td class="num">'+money(b.valor)+'</td><td>'+dt(b.vencimento)+'</td><td>'+(classeB(b)==='vencidas'&&b.status==='aberto'?'<span class="chip bad">Vencido</span>':chip(STBOL,b.status))+'</td><td class="num">'+money(b.valor_recebido)+'</td></tr>';
       });h+='</table></div>';}
   }
@@ -691,8 +694,8 @@ window.A={
   },
   sair:async function(){await sb.auth.signOut();},
   toggleInativas:function(){S.showInativas=!S.showInativas;loadDash().catch(fail);},
+  cobAba:function(a){S.cobAba=a;S.cobFiltro='receber';loadCobranca().catch(fail);},
   cobFiltro:function(f){S.cobFiltro=f;loadCobranca().catch(fail);},
-  bolFiltro:function(f){S.bolFiltro=f;loadCobranca().catch(fail);},
   utab:function(t){S.usinaTab=t;S.cicloSel=null;renderUsina();},
   verCiclo:function(id){S.cicloSel=id;renderUsina();if(id)window.scrollTo({top:0,behavior:'smooth'});},
   solicitar:async function(cicloId,tipo){
