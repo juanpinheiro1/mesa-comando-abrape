@@ -194,6 +194,7 @@ function renderShell(){
   '<nav><button id="nv-dash" onclick="go(&quot;dash&quot;)">Usinas</button>'+
   '<button id="nv-cli" onclick="go(&quot;cli&quot;)">Clientes</button>'+
   '<button id="nv-cob" onclick="go(&quot;cob&quot;)">Financeiro</button>'+
+  '<button id="nv-grp" onclick="go(&quot;grp&quot;)">Gestao de Grupos</button>'+
   '<button id="nv-site" onclick="go(&quot;site&quot;)">Site</button>'+
   '<button id="nv-adm" onclick="go(&quot;adm&quot;)">Administracao</button></nav>'+
   '<div class="userchip"><span><b>'+esc(S.perfil.nome)+'</b> &middot; '+(S.perfil.papel==='admin'?'Admin':'Operacao')+'</span><button onclick="A.sair()">Sair</button></div>'+
@@ -201,7 +202,7 @@ function renderShell(){
 }
 function go(v,arg){
   S.view=v;var _h=el('uhint');if(_h)_h.style.display='none';
-  ['dash','cli','cob','site','adm'].forEach(function(k){var b=el('nv-'+k);if(b)b.classList.toggle('on',k===v||(v==='usina'&&k==='dash'));});
+  ['dash','cli','cob','grp','site','adm'].forEach(function(k){var b=el('nv-'+k);if(b)b.classList.toggle('on',k===v||(v==='usina'&&k==='dash'));});
   el('main').innerHTML='<p class="empty">Carregando&hellip;</p>';
   if(v==='site')loadSite().catch(fail);
   if(v==='dash')loadDash().catch(fail);
@@ -209,6 +210,7 @@ function go(v,arg){
   if(v==='cli')loadClientes().catch(fail);
   if(v==='cob')loadCobranca().catch(fail);
   if(v==='adm')loadAdmin().catch(fail);
+  if(v==='grp')loadGrupos().catch(fail);
   if(v==='entrada'){el('nv-dash').classList.add('on');loadEntrada().catch(fail);}
 }
 
@@ -294,6 +296,100 @@ function modalConferencia(res,nomeArq){
   });
 }
 
+// ---------- GESTAO DE GRUPOS (clientes multi-UC: consumo, geracao propria, creditos, faturas) ----------
+async function loadGrupos(){
+  var q=await Promise.all([
+    sb.from('grupos').select('*').eq('ativo',true).order('nome'),
+    sb.from('grupo_ciclos').select('*').order('mes_referencia',{ascending:false}),
+    sb.from('grupo_ucs').select('*').order('apelido'),
+    sb.from('grupo_usinas').select('*').order('nome'),
+    sb.from('grupo_leituras').select('*'),
+    sb.from('grupo_geracao').select('*'),
+    sb.from('solicitacoes').select('id,tipo,status,grupo_ciclo_id,criado_em').eq('status','pendente').not('grupo_ciclo_id','is',null)
+  ]);
+  for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
+  var G={grupos:q[0].data,ciclos:q[1].data,ucs:q[2].data,usinas:q[3].data,leituras:q[4].data,ger:q[5].data,fila:q[6].data};
+  S.grp=G;
+  if(!S.grpId||!G.grupos.some(function(g){return g.id===S.grpId;}))S.grpId=(G.grupos[0]||{}).id;
+  var cs=G.ciclos.filter(function(c){return c.grupo_id===S.grpId;});
+  if(!S.grpCiclo||!cs.some(function(c){return c.id===S.grpCiclo;}))S.grpCiclo=(cs[0]||{}).id;
+  renderGrupos();
+}
+function renderGrupos(){
+  var G=S.grp, g=G.grupos.filter(function(x){return x.id===S.grpId;})[0];
+  if(!g){el('main').innerHTML='<p class="empty">Nenhum grupo cadastrado.</p>';return;}
+  var cs=G.ciclos.filter(function(c){return c.grupo_id===S.grpId;});
+  var c=cs.filter(function(x){return x.id===S.grpCiclo;})[0];
+  var ucs=G.ucs.filter(function(u){return u.grupo_id===S.grpId;});
+  var usinas=G.usinas.filter(function(u){return u.grupo_id===S.grpId;});
+  var lei=c?G.leituras.filter(function(l){return l.ciclo_id===c.id;}):[];
+  var ger=c?G.ger.filter(function(x){return x.ciclo_id===c.id;}):[];
+  var ucMap={};ucs.forEach(function(u){ucMap[u.id]=u;});
+  var usMap={};usinas.forEach(function(u){usMap[u.id]=u;});
+  var n=function(v){return v===null||v===undefined?0:Number(v);};
+  var kwh=function(v){return (v===null||v===undefined)?'&mdash;':Math.round(Number(v)).toLocaleString('pt-BR')+' kWh';};
+  var k=c&&c.kpis?c.kpis:{};
+  var consumo=lei.reduce(function(a,l){return a+n(l.consumo_kwh);},0);
+  var faturas=lei.reduce(function(a,l){return a+n(l.valor_total);},0);
+  var creditos=lei.reduce(function(a,l){return a+n(l.injetada_gdi_kwh)+n(l.injetada_gdii_kwh);},0);
+  var gerProp=ger.filter(function(x){return (usMap[x.grupo_usina_id]||{}).propriedade==='propria';}).reduce(function(a,x){return a+n(x.kwh);},0);
+  var gerLoc=ger.filter(function(x){return (usMap[x.grupo_usina_id]||{}).propriedade==='locada';}).reduce(function(a,x){return a+n(x.kwh);},0);
+  var h='<div class="pagehead"><h1>Gestao de Grupos</h1><span class="sub">'+esc(g.nome)+'</span>';
+  h+='<div class="mesnav">';
+  if(G.grupos.length>1){h+='<select class="inline" onchange="A.grpSel(this.value)">'+G.grupos.map(function(x){return '<option value="'+x.id+'"'+(x.id===S.grpId?' selected':'')+'>'+esc(x.nome)+'</option>';}).join('')+'</select>';}
+  h+='<select class="inline" onchange="A.grpCiclo(this.value)">'+cs.map(function(x){return '<option value="'+x.id+'"'+(x.id===S.grpCiclo?' selected':'')+'>'+mesLbl(x.mes_referencia)+'</option>';}).join('')+'</select>';
+  h+='<button class="btn sec mini" onclick="A.grpNovoCiclo()">+ Novo mes</button>';
+  h+='</div></div>';
+  if(!c){el('main').innerHTML=h+'<p class="empty">Nenhum ciclo neste grupo ainda. Use &quot;+ Novo mes&quot; para abrir o primeiro.</p>';return;}
+  var naFila=(G.fila||[]).filter(function(x){return x.grupo_ciclo_id===c.id;}).length;
+  h+='<div class="kpis">';
+  h+='<div class="kpi"><div class="l">UCs no ciclo</div><div class="v">'+lei.length+' / '+ucs.length+'</div><div class="d">contas lidas neste mes</div></div>';
+  h+='<div class="kpi"><div class="l">Consumo Energisa</div><div class="v">'+Math.round(consumo).toLocaleString('pt-BR')+'</div><div class="d">kWh faturados pela rede</div></div>';
+  h+='<div class="kpi"><div class="l">Geracao propria</div><div class="v">'+Math.round(gerProp).toLocaleString('pt-BR')+'</div><div class="d">kWh medidos nos inversores</div></div>';
+  h+='<div class="kpi"><div class="l">Usinas locadas</div><div class="v">'+Math.round(gerLoc).toLocaleString('pt-BR')+'</div><div class="d">kWh injetados (ABRAPE)</div></div>';
+  h+='<div class="kpi"><div class="l">Creditos compensados</div><div class="v">'+Math.round(creditos).toLocaleString('pt-BR')+'</div><div class="d">kWh abatidos nas faturas</div></div>';
+  h+='<div class="kpi"><div class="l">Faturas do mes</div><div class="v">'+money(faturas)+'</div><div class="d">total pago a distribuidora</div></div>';
+  if(k.economia_liquida||k.economia_mes)h+='<div class="kpi"><div class="l">Economia</div><div class="v">'+money(k.economia_liquida||k.economia_mes)+'</div><div class="d">'+(k.economia_liquida?'liquida (ja descontada a locacao)':'no mes')+(k.cobertura_pct?' &middot; cobertura '+k.cobertura_pct+'%':'')+'</div></div>';
+  h+='</div>';
+  h+='<div class="panel" style="margin-bottom:16px"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
+  h+='<b>Ciclo '+mesLbl(c.mes_referencia)+'</b>'+chip({aberto:['Aberto','warn'],processado:['Processado','info'],fechado:['Fechado','ok']},c.status);
+  h+='<button class="btn mini" style="margin-left:auto" onclick="A.grpUpload()">Enviar contas do mes</button>';
+  h+='<button class="btn sec mini" onclick="A.grpProcessar()">'+(naFila?'Na fila do Claude ('+naFila+')':'Pedir processamento')+'</button>';
+  h+='</div>';
+  if(c.observacoes)h+='<p class="note" style="margin-top:10px">'+esc(c.observacoes)+'</p>';
+  h+='</div>';
+  // tabela por UC
+  h+='<div class="panel"><h2>UCs do grupo ('+lei.length+' com conta neste mes)</h2><div class="tblwrap"><table><tr><th>Loja</th><th>Matricula</th><th>Classe</th><th class="num">Consumo</th><th class="num">Creditos</th><th class="num">Nao compensado</th><th class="num">Saldo</th><th class="num">Fatura</th><th>Obs</th></tr>';
+  var lm={};lei.forEach(function(l){lm[l.grupo_uc_id]=l;});
+  ucs.slice().sort(function(a,b){return String(a.apelido||'').localeCompare(String(b.apelido||''));}).forEach(function(u){
+    var l=lm[u.id];
+    var cred=l?n(l.injetada_gdi_kwh)+n(l.injetada_gdii_kwh):null;
+    h+='<tr'+(l?'':' style="opacity:.5"')+'><td><b>'+esc(u.apelido||'')+'</b>'+(u.uc_id?' <span class="chip info" title="Tambem e recebedora de uma usina ABRAPE">ABRAPE</span>':'')+'</td>';
+    h+='<td class="mono">'+esc(u.matricula||'')+'</td><td style="font-size:12px">'+esc((u.classificacao||'').replace('COMERCIAL ','').replace('TRIFASICO','TRI'))+'</td>';
+    h+='<td class="num">'+(l?kwh(l.consumo_kwh):'sem conta')+'</td><td class="num">'+(l?kwh(cred):'&mdash;')+'</td><td class="num">'+(l?kwh(l.nao_compensado_kwh):'&mdash;')+'</td>';
+    h+='<td class="num">'+(l&&l.saldo_kwh?kwh(l.saldo_kwh):'&mdash;')+'</td><td class="num">'+(l?money(l.valor_total):'&mdash;')+'</td>';
+    h+='<td style="font-size:12px;color:var(--muted)">'+esc(l?(l.observacoes||''):'')+'</td></tr>';
+  });
+  h+='</table></div></div>';
+  // usinas
+  var gm={};ger.forEach(function(x){gm[x.grupo_usina_id]=x;});
+  var linhasU=function(prop,titulo){
+    var arr=usinas.filter(function(u){return u.propriedade===prop;});
+    if(!arr.length)return '';
+    var x='<div class="panel"><h2>'+titulo+' ('+arr.length+')</h2><div class="tblwrap"><table><tr><th>Usina</th><th>Status</th><th class="num">kWp</th><th class="num">Geracao no mes</th><th class="num">kWh/kWp</th><th>Observacao</th></tr>';
+    arr.sort(function(a,b){return String(a.nome).localeCompare(String(b.nome));}).forEach(function(u){
+      var gx=gm[u.id], kw=n(u.potencia_kwp), yield_=gx&&kw?Math.round(n(gx.kwh)/kw):null;
+      var alerta=(u.status==='OPERANDO'&&!gx);
+      x+='<tr><td><b>'+esc(u.nome)+'</b>'+(u.usina_id?' <span class="chip gold">usina ABRAPE</span>':'')+'</td><td>'+esc(u.status||'')+'</td>';
+      x+='<td class="num">'+(kw?kw.toLocaleString('pt-BR'):'&mdash;')+'</td><td class="num">'+(gx?kwh(gx.kwh):'<span class="chip bad">sem leitura</span>')+'</td>';
+      x+='<td class="num">'+(yield_?yield_:'&mdash;')+'</td><td style="font-size:12px;color:var(--muted)">'+esc(u.observacoes||'')+(alerta?' <span class="chip bad">verificar monitoramento</span>':'')+'</td></tr>';
+    });
+    return x+'</table></div></div>';
+  };
+  h+=linhasU('locada','Usinas locadas (ABRAPE)');
+  h+=linhasU('propria','Usinas proprias do grupo');
+  el('main').innerHTML=h;
+}
 // ---------- CAIXA DE ENTRADA (contas de energia provavelmente disponiveis) ----------
 function hojeLocal(){var d=new Date();return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);}
 async function dadosEntrada(){
@@ -629,7 +725,7 @@ async function loadDash(){
     if(pi&&pi.overdue)itens.push({key:'leitura:'+u.id+':'+pi.d, uid:u.id, txt:esc(u.nome)+' &middot; leitura da geradora em '+dts(pi.d)+' &mdash; coletar a conta de energia e iniciar o novo ciclo', tipo:'bad'});
   });
   fila.filter(function(s){return s.tipo!=='atencao';}).forEach(function(s){
-    itens.push({uid:s.usina_id, txt:'Fila do Claude: '+({processar:'processar',faturar:'faturar',enviar:'enviar relatorios',novo_documento:'arquivo novo para atualizar'}[s.tipo])+' &middot; '+esc(s.usinas?s.usinas.nome:'')+' &middot; ciclo '+(s.ciclos?mesLbl(s.ciclos.mes_referencia):'')+' (solicitado '+dt(s.criado_em)+')', tipo:'gold'});
+    itens.push({uid:s.usina_id, txt:'Fila do Claude: '+(({processar:'processar',faturar:'faturar',enviar:'enviar relatorios',novo_documento:'arquivo novo para atualizar',grupo_documento:'contas de grupo para ler',processar_grupo:'fechar o mes de um grupo'}[s.tipo]||s.tipo))+' &middot; '+esc(s.usinas?s.usinas.nome:'')+' &middot; ciclo '+(s.ciclos?mesLbl(s.ciclos.mes_referencia):'')+' (solicitado '+dt(s.criado_em)+')', tipo:'gold'});
   });
   h+='<div class="panel" style="margin-top:22px'+(itens.length?';border-color:var(--warn)':'')+'"><div style="display:flex;align-items:center;gap:10px"><h2 style="margin:0">Atencao</h2><button class="btn sec mini" style="margin-left:auto" onclick="A.novoLembrete(null)">+ Lembrete</button></div><div style="height:10px"></div>';
   if(!itens.length)h+='<p class="empty">Nada exigindo acao no momento &mdash; tudo em dia.</p>';
@@ -1328,6 +1424,50 @@ window.A={
     inp.click();
   },
   respConf:function(v){A.closeModal();if(A._respConf){var f=A._respConf;A._respConf=null;f(v);}},
+  grpSel:function(v){S.grpId=v;S.grpCiclo=null;loadGrupos().catch(fail);},
+  grpCiclo:function(v){S.grpCiclo=v;renderGrupos();},
+  grpNovoCiclo:async function(){
+    var m=window.prompt('Mes do novo ciclo (AAAA-MM):',new Date().toISOString().slice(0,7));
+    if(!m||!/^\d{4}-\d{2}$/.test(m))return;
+    try{var r=await sb.from('grupo_ciclos').insert({grupo_id:S.grpId,mes_referencia:m+'-01',status:'aberto'}).select().single();
+      if(r.error)throw r.error;S.grpCiclo=r.data.id;toast('Ciclo '+mesLbl(m+'-01')+' aberto.');loadGrupos().catch(fail);}catch(e){fail(e);}
+  },
+  grpUpload:function(){
+    var c=(S.grp.ciclos||[]).filter(function(x){return x.id===S.grpCiclo;})[0];if(!c)return;
+    var inp=document.createElement('input');inp.type='file';inp.accept='application/pdf,.pdf';inp.multiple=true;
+    inp.onchange=async function(){
+      var fs=Array.prototype.slice.call(inp.files||[]);if(!fs.length)return;
+      var okN=0,erros=[];
+      toast('Enviando '+fs.length+' arquivo(s)\u2026');
+      for(var i=0;i<fs.length;i++){
+        var f=fs[i];
+        try{
+          var nome=f.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9._-]/g,'_');
+          var path='grupos/'+S.grpId+'/'+String(c.mes_referencia).slice(0,7)+'/'+Date.now()+'_'+nome;
+          var up=await sb.storage.from('documentos').upload(path,f);if(up.error)throw up.error;
+          // tenta identificar a loja pelo nome do arquivo (apelido cadastrado)
+          var base=f.name.replace(/\.[^.]+$/,'').trim().toLowerCase();
+          var uc=(S.grp.ucs||[]).filter(function(u){return u.grupo_id===S.grpId&&u.apelido&&(u.apelido.toLowerCase()===base||base.indexOf(u.apelido.toLowerCase())===0);})[0];
+          var r=await sb.from('grupo_documentos').insert({ciclo_id:c.id,grupo_uc_id:uc?uc.id:null,nome_arquivo:f.name,storage_path:path,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email});
+          if(r.error)throw r.error;okN++;
+        }catch(e){erros.push(f.name);}
+      }
+      try{
+        var ja=(S.grp.fila||[]).filter(function(x){return x.grupo_ciclo_id===c.id;}).length;
+        if(!ja)await sb.from('solicitacoes').insert({tipo:'grupo_documento',grupo_ciclo_id:c.id,solicitado_por:S.perfil.email,observacoes:JSON.stringify({grupo:S.grpId,mes:c.mes_referencia})});
+      }catch(e){}
+      toast(okN+' arquivo(s) enviados'+(erros.length?' &middot; '+erros.length+' falharam':'')+'. Item na fila do Claude.');
+      loadGrupos().catch(fail);
+    };
+    inp.click();
+  },
+  grpProcessar:async function(){
+    var c=(S.grp.ciclos||[]).filter(function(x){return x.id===S.grpCiclo;})[0];if(!c)return;
+    if((S.grp.fila||[]).filter(function(x){return x.grupo_ciclo_id===c.id;}).length){toast('Este ciclo ja esta na fila do Claude.');return;}
+    if(!window.confirm('Pedir ao Claude o processamento de '+mesLbl(c.mes_referencia)+'?'))return;
+    try{var r=await sb.from('solicitacoes').insert({tipo:'processar_grupo',grupo_ciclo_id:c.id,solicitado_por:S.perfil.email,observacoes:JSON.stringify({grupo:S.grpId,mes:c.mes_referencia})});
+      if(r.error)throw r.error;toast('Pedido registrado na fila do Claude.');loadGrupos().catch(fail);}catch(e){fail(e);}
+  },
   caixaEntrada:function(){go('entrada');},
   entradaUpload:function(i,qual){
     var e=S.entrada.lista[i];if(!e)return;
