@@ -217,7 +217,7 @@ async function dadosEntrada(){
   var q=await Promise.all([
     sb.from('usinas').select('id,nome,uc_geradora_id,ativo').eq('ativo',true),
     sb.from('rateios').select('usina_id,uc_id,vigencia_fim').is('vigencia_fim',null),
-    sb.from('ucs').select('id,numero_uc,tipo,proxima_leitura,proxima_leitura_estimada, clientes(nome)'),
+    sb.from('ucs').select('id,numero_uc,tipo,proxima_leitura,proxima_leitura_estimada,ultima_leitura, clientes(nome)'),
     sb.from('documentos').select('uc_id,tipo,ref_leitura,criado_em,ciclo_id, ciclos(mes_referencia,usina_id)').in('tipo',['conta_uc_recebedora','conta_geradora']).not('uc_id','is',null),
     sb.from('ciclos').select('id,usina_id,mes_referencia,mes_geracao,status')
   ]);
@@ -249,6 +249,7 @@ async function dadosEntrada(){
         else if(cs[0]){var d2=new Date(String(cs[0].mes_referencia).slice(0,10)+'T12:00:00');d2.setMonth(d2.getMonth()+1);mes=d2.toISOString().slice(0,7)+'-01';}
       }
       e.alvo[us1.id]=mes;
+      (e.ultCiclo=e.ultCiclo||{})[us1.id]=ult||null;
     });
     return e;
   });
@@ -264,18 +265,21 @@ async function loadEntrada(){
   var nomeUC=function(e){return (e.uc.clientes?esc(e.uc.clientes.nome):(e.papel==='geradora'?'UC geradora':'UC'))+' <span style="color:var(--muted);font-size:12px" class="mono">'+esc(e.uc.numero_uc)+'</span>';};
   var usinasTxt=function(e){return e.usinas.map(function(u){return '<a href="#" onclick="event.preventDefault();go(&quot;usina&quot;,&quot;'+u.id+'&quot;)">'+esc(u.nome)+'</a>';}).join('<br>');};
   var linhas=function(arr,comBotao){
-    var x='<div class="tblwrap"><table><tr><th>UC</th><th>Tipo</th><th>Usina</th><th>Leitura prevista</th><th></th></tr>';
+    var x='<div class="tblwrap"><table><tr><th>UC</th><th>Tipo</th><th>Usina</th><th>Ultima conta na Mesa</th><th>Conta esperada</th><th></th></tr>';
     arr.forEach(function(e){
       var i=d.lista.indexOf(e);
       x+='<tr><td>'+nomeUC(e)+'</td><td>'+(e.papel==='geradora'?'<span class="chip gold">Geradora</span>':'<span class="chip">Recebedora</span>')+'</td><td>'+usinasTxt(e)+'</td>';
-      x+='<td>'+(e.prox?dt(e.prox):'&mdash;')+(e.uc.proxima_leitura_estimada?' <span class="chip" title="Data estimada: ultima conta na Mesa e antiga">estimada</span>':'')+(e.vencida?'<br><span style="font-size:12px;color:var(--bad)">'+(e.dias===0?'hoje':'ha '+e.dias+' dia'+(e.dias===1?'':'s'))+'</span>':'')+'</td>';
+      var ultTxt=e.usinas.map(function(u){var c=(e.ultCiclo||{})[u.id];return c?'ciclo '+mesLbl(c):'&mdash;';}).join('<br>');
+      var alvoTxt=e.usinas.map(function(u){var c=(e.alvo||{})[u.id];return c?'&rarr; ciclo '+mesLbl(c):'';}).join('<br>');
+      x+='<td style="font-size:13px">'+(e.uc.ultima_leitura?'leitura '+dt(e.uc.ultima_leitura)+'<br>':'')+'<span style="color:var(--muted)">'+ultTxt+'</span></td>';
+      x+='<td>'+(e.prox?'leitura '+dt(e.prox):'&mdash;')+(e.uc.proxima_leitura_estimada?' <span class="chip" title="Data estimada: ultima conta na Mesa e antiga">estimada</span>':'')+(e.vencida?' <span style="font-size:12px;color:var(--bad)">('+(e.dias===0?'hoje':'ha '+e.dias+' dia'+(e.dias===1?'':'s'))+')</span>':'')+'<br><span style="font-size:12px;color:var(--muted)">'+alvoTxt+'</span></td>';
       x+='<td style="white-space:nowrap">'+(comBotao?'<button class="btn mini" onclick="A.entradaUpload('+i+',&quot;conta&quot;)">Enviar conta</button>'+(e.papel==='geradora'?' <button class="btn sec mini" onclick="A.entradaUpload('+i+',&quot;demo&quot;)">Demonstrativo</button>':''):'<button class="btn sec mini" onclick="A.entradaUpload('+i+',&quot;conta&quot;)">Enviar antecipado</button>')+'</td></tr>';
     });
     return x+'</table></div>';
   };
   var h='<div class="pagehead"><button class="btn sec mini" onclick="go(&quot;dash&quot;)">&larr; Painel</button><h1>Caixa de entrada</h1><span class="sub">Contas de energia provavelmente disponiveis (data de leitura ja chegou)</span></div>';
   h+='<div class="panel"'+(venc.length?' style="border-color:var(--bad)"':'')+'><h2>Contas a buscar ('+venc.length+')</h2>';
-  h+='<p class="note" style="margin-bottom:10px">A data da proxima leitura impressa na ultima conta de cada UC ja passou e a conta nova ainda nao foi enviada. Ao enviar, o arquivo entra no ciclo da usina e na fila do Claude, e sai desta lista.</p>';
+  h+='<p class="note" style="margin-bottom:10px">A <b>proxima leitura</b> impressa na ultima conta de cada UC ja passou, entao a conta <b>seguinte</b> (do ciclo indicado em &quot;Conta esperada&quot;) provavelmente ja esta disponivel na distribuidora e ainda nao foi enviada. Ao enviar, o arquivo entra no ciclo da usina e na fila do Claude, e sai desta lista.</p>';
   h+=venc.length?linhas(venc,true):'<p class="empty">Nenhuma conta pendente &mdash; tudo em dia.</p>';
   h+='</div>';
   if(prox.length)h+='<div class="panel"><h2>Proximos 7 dias ('+prox.length+')</h2>'+linhas(prox,false)+'</div>';
