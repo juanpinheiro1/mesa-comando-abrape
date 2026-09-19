@@ -213,13 +213,94 @@ function go(v,arg){
 }
 
 var TIPOS_ENVIO=['relatorio_cliente','boleto','relatorio_investidor'];
+// ---------- CONFERENCIA DO ARQUIVO ENVIADO (le o PDF no navegador antes de salvar) ----------
+var PDFJS_URL='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+function carregaPdfJs(){
+  if(window.pdfjsLib)return Promise.resolve(window.pdfjsLib);
+  if(window._pdfjsP)return window._pdfjsP;
+  window._pdfjsP=new Promise(function(ok,err){
+    var sc=document.createElement('script');sc.src=PDFJS_URL;
+    sc.onload=function(){try{window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';}catch(e){}ok(window.pdfjsLib);};
+    sc.onerror=function(){err(new Error('Nao consegui carregar o leitor de PDF.'));};
+    document.head.appendChild(sc);
+  });
+  return window._pdfjsP;
+}
+async function textoDoPdf(file){
+  var lib=await carregaPdfJs();
+  var buf=await file.arrayBuffer();
+  var doc=await lib.getDocument({data:buf}).promise;
+  var t='';
+  for(var i=1;i<=Math.min(doc.numPages,2);i++){
+    var pg=await doc.getPage(i);
+    var c=await pg.getTextContent();
+    t+=c.items.map(function(x){return x.str;}).join('\n')+'\n';
+  }
+  return t;
+}
+function soDigitos(x){return String(x||'').replace(/\D/g,'');}
+function dataBR(iso){var p=String(iso).slice(0,10).split('-');return p[2]+'/'+p[1]+'/'+p[0];}
+// devolve {avisos:[], dados:{uc,atual,prox,ref}}
+function conferirConta(txt,esperado,qual){
+  var avisos=[], dados={};
+  var t=txt.replace(/\u00a0/g,' ');
+  var tl=t.toLowerCase();
+  var ehConta=/danf3e|nota fiscal\s*\/?\s*conta de energia|nota fiscal n|pr.xima leitura/i.test(t);
+  var ehDemo=/demonstrativo de compensa/i.test(t);
+  var ehNosso=/fatura abrape|abrape solar - cnpj|demonstrativo de economia|ficha de compensa/i.test(tl)&&!ehConta;
+  if(qual==='demo'){
+    if(!ehDemo)avisos.push('O arquivo nao parece ser o <b>demonstrativo de compensacao</b> da distribuidora.');
+  } else {
+    if(ehDemo)avisos.push('O arquivo parece ser o <b>demonstrativo de compensacao</b>, nao a conta de energia.');
+    else if(ehNosso)avisos.push('O arquivo parece ser um <b>documento da ABRAPE</b> (fatura, relatorio ou boleto), nao a conta da distribuidora.');
+    else if(!ehConta)avisos.push('Nao reconheci este arquivo como uma conta de energia.');
+  }
+  // numero da UC / matricula
+  var digArq=soDigitos(t);
+  var ucEsp=soDigitos(esperado.numero_uc), matEsp=soDigitos(esperado.matricula);
+  var achouUC=ucEsp&&ucEsp.length>=8&&digArq.indexOf(ucEsp)>-1;
+  var achouMat=!achouUC&&matEsp&&matEsp.length>=6&&digArq.indexOf(matEsp)>-1;
+  if(!achouUC&&!achouMat){
+    var m=t.match(/(\d{1,3}(?:\.\d{3}){2,3}-\d{2})/);
+    dados.uc=m?m[1]:null;
+    avisos.push('Nao encontrei a UC <b>'+esc(esperado.numero_uc)+'</b> dentro do arquivo'+(m?'. O arquivo parece ser da UC <b>'+esc(m[1])+'</b>':'')+'.');
+  } else dados.uc=esperado.numero_uc;
+  // datas (Energisa: proxima | anterior | dias | atual  /  CPFL: atual | anterior | dias | Proxima leitura X)
+  var m2=t.match(/(\d\d\/\d\d\/\d{4})\s*\n\s*(\d\d\/\d\d\/\d{4})\s*\n\s*(\d{1,3})\s*\n\s*(\d\d\/\d\d\/\d{4})/);
+  var m3=t.match(/(\d\d\/\d\d\/\d{4})\s*\n\s*(\d\d\/\d\d\/\d{4})\s*\n\s*(\d{1,3})\s*\n\s*Pr.xima leitura\s*\n?\s*(\d\d\/\d\d\/\d{4})/i);
+  if(m3){dados.atual=m3[1];dados.ant=m3[2];dados.prox=m3[4];}
+  else if(m2){dados.prox=m2[1];dados.ant=m2[2];dados.atual=m2[4];}
+  if(qual!=='demo'&&esperado.prox&&dados.atual){
+    var esp=new Date(String(esperado.prox).slice(0,10)+'T12:00:00');
+    var pa=dados.atual.split('/'); var at=new Date(pa[2]+'-'+pa[1]+'-'+pa[0]+'T12:00:00');
+    var dif=Math.round((at-esp)/86400000);
+    if(dif<-3)avisos.push('A leitura desta conta e <b>'+dados.atual+'</b>, anterior a leitura esperada (<b>'+dataBR(esperado.prox)+'</b>). Parece ser uma conta de mes anterior.');
+    else if(dif>10)avisos.push('A leitura desta conta e <b>'+dados.atual+'</b>, bem depois da leitura esperada (<b>'+dataBR(esperado.prox)+'</b>). Confira se nao pulou um mes.');
+  }
+  var mr=t.match(/(Janeiro|Fevereiro|Mar.o|Abril|Maio|Junho|Julho|Agosto|Setembro|Outubro|Novembro|Dezembro)\s*\/\s*(\d{4})/i);
+  if(mr)dados.ref=mr[0];
+  return {avisos:avisos,dados:dados};
+}
+function modalConferencia(res,nomeArq){
+  return new Promise(function(resolve){
+    var x='<h2>Confira o arquivo</h2>';
+    x+='<p class="note" style="margin-bottom:10px">Arquivo: <b>'+esc(nomeArq)+'</b>'+(res.dados.ref?' &middot; referencia '+esc(res.dados.ref):'')+(res.dados.atual?' &middot; leitura '+esc(res.dados.atual):'')+'</p>';
+    x+='<div class="tblwrap"><table><tr><th>O que encontrei de diferente</th></tr>';
+    res.avisos.forEach(function(a){x+='<tr><td>'+a+'</td></tr>';});
+    x+='</table></div>';
+    x+='<p class="note" style="margin-top:10px">Se foi engano, cancele e envie o arquivo certo. Se estiver certo assim mesmo, o envio fica registrado com esta observacao para o Claude conferir.</p>';
+    x+='<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn sec" onclick="A.respConf(false)">Cancelar envio</button><button class="btn" onclick="A.respConf(true)">Enviar assim mesmo</button></div>';
+    A._respConf=resolve;A.modal(x);
+  });
+}
+
 // ---------- CAIXA DE ENTRADA (contas de energia provavelmente disponiveis) ----------
 function hojeLocal(){var d=new Date();return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);}
 async function dadosEntrada(){
   var q=await Promise.all([
     sb.from('usinas').select('id,nome,uc_geradora_id,ativo').eq('ativo',true),
     sb.from('rateios').select('usina_id,uc_id,vigencia_fim').is('vigencia_fim',null),
-    sb.from('ucs').select('id,numero_uc,tipo,proxima_leitura,proxima_leitura_estimada,ultima_leitura, clientes(nome)'),
+    sb.from('ucs').select('id,numero_uc,matricula,tipo,proxima_leitura,proxima_leitura_estimada,ultima_leitura, clientes(nome)'),
     sb.from('documentos').select('uc_id,tipo,ref_leitura,criado_em,ciclo_id, ciclos(mes_referencia,usina_id)').in('tipo',['conta_uc_recebedora','conta_geradora']).not('uc_id','is',null),
     sb.from('ciclos').select('id,usina_id,mes_referencia,mes_geracao,status')
   ]);
@@ -585,7 +666,7 @@ async function loadUsina(){
   var q=await Promise.all([
     sb.from('usinas').select('*').eq('id',id).single(),
     sb.from('ciclos').select('*').eq('usina_id',id).order('mes_referencia',{ascending:false}),
-    sb.from('rateios').select('*, ucs(id,numero_uc,endereco,cidade,tipo,multi_fonte,clientes(id,nome))').eq('usina_id',id),
+    sb.from('rateios').select('*, ucs(id,numero_uc,matricula,proxima_leitura,endereco,cidade,tipo,multi_fonte,clientes(id,nome))').eq('usina_id',id),
     sb.from('condicoes_comerciais').select('*').eq('usina_id',id),
     sb.from('geracao_mensal').select('*').eq('usina_id',id).order('mes_geracao',{ascending:false}),
     sb.from('documentos').select('*, ciclos(mes_referencia)').eq('usina_id',id).order('criado_em',{ascending:false}),
@@ -697,7 +778,7 @@ function renderUsinaTab(){
           if(!ds.length)return '<p class="empty" style="padding:6px 0">'+vazio+'</p>';
           var x='<div class="tblwrap"><table><tr><th>Documento</th><th>Tipo</th>'+(comEnvio?'<th>Envio</th>':'')+'<th></th></tr>';
           ds.forEach(function(d){
-            x+='<tr><td style="word-break:break-all">'+esc(d.nome_arquivo)+'</td><td>'+(TIPODOC[d.tipo]||esc(d.tipo))+'</td>';
+            x+='<tr><td style="word-break:break-all">'+esc(d.nome_arquivo)+(d.validacao?'<br><span class="chip bad" title="'+esc(d.validacao)+'">enviado com divergencia</span>':'')+'</td><td>'+(TIPODOC[d.tipo]||esc(d.tipo))+'</td>';
             if(comEnvio)x+='<td>'+(d.enviado_em?'<span class="chip ok">Enviado '+dt(d.enviado_em)+'</span>'+(d.enviado_para?'<br><span style="color:var(--muted);font-size:11.5px">'+esc(d.enviado_para)+'</span>':''):'<span class="chip warn">Nao enviado</span>')+'</td>';
             var vinc='';
             if(d.tipo==='conta_uc_recebedora'){
@@ -1213,19 +1294,34 @@ window.A={
     inp.onchange=async function(){
       try{
         var f=inp.files[0];if(!f)return;
+        var obsConf=null;
+        var ucRef=(S.u.rateios||[]).filter(function(r){return r.uc_id===ucId;})[0];
+        var ucInfo=ucRef&&ucRef.ucs?ucRef.ucs:(ucId&&S.u.ger_uc&&S.u.ger_uc.id===ucId?S.u.ger_uc:null);
+        if(ucInfo&&tipo!=='outro'){
+          try{
+            toast('Conferindo o arquivo\u2026');
+            var res2=conferirConta(await textoDoPdf(f),{numero_uc:ucInfo.numero_uc,matricula:ucInfo.matricula,prox:ucInfo.proxima_leitura},tipo==='demonstrativo_energisa'?'demo':'conta');
+            if(res2.avisos.length){
+              var segue2=await modalConferencia(res2,f.name);
+              if(!segue2){toast('Envio cancelado.');return;}
+              obsConf='ENVIADO COM DIVERGENCIA ('+new Date().toLocaleString('pt-BR')+'): '+res2.avisos.map(function(a){return a.replace(/<[^>]+>/g,'');}).join(' | ');
+            }
+          }catch(errc){ obsConf='Nao foi possivel conferir o arquivo automaticamente: '+(errc.message||errc); }
+        }
         var cic=S.u.ciclos.filter(function(c){return c.id===cicloId;})[0];
         var pasta=cic?String(cic.mes_referencia).slice(0,7):'geral';
         var nome=f.name.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-zA-Z0-9._-]/g,'_');
         var path=S.usinaId+'/'+pasta+'/'+Date.now()+'_'+nome;
         var up=await sb.storage.from('documentos').upload(path,f);
         if(up.error)throw up.error;
-        var r=await sb.from('documentos').insert({usina_id:S.usinaId,ciclo_id:cicloId,uc_id:ucId||null,tipo:tipo,storage_path:path,nome_arquivo:f.name,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email});
+        var r=await sb.from('documentos').insert({usina_id:S.usinaId,ciclo_id:cicloId,uc_id:ucId||null,tipo:tipo,storage_path:path,nome_arquivo:f.name,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email,validacao:obsConf});
         if(r.error)throw r.error;
-        toast('Documento anexado. Item criado na fila do Claude.');loadUsina().catch(fail);
+        toast('Documento anexado'+(obsConf?' (com divergencia registrada)':'')+'. Item criado na fila do Claude.');loadUsina().catch(fail);
       }catch(e){fail(e);}
     };
     inp.click();
   },
+  respConf:function(v){A.closeModal();if(A._respConf){var f=A._respConf;A._respConf=null;f(v);}},
   caixaEntrada:function(){go('entrada');},
   entradaUpload:function(i,qual){
     var e=S.entrada.lista[i];if(!e)return;
@@ -1234,6 +1330,18 @@ window.A={
       try{
         var f=inp.files[0];if(!f)return;
         var tipo=qual==='demo'?'demonstrativo_energisa':(e.papel==='geradora'?'conta_geradora':'conta_uc_recebedora');
+        var obsConf=null, lido=null;
+        try{
+          toast('Conferindo o arquivo\u2026');
+          var txt=await textoDoPdf(f);
+          var res=conferirConta(txt,{numero_uc:e.uc.numero_uc,matricula:e.uc.matricula,prox:e.prox},qual);
+          lido=res.dados;
+          if(res.avisos.length){
+            var segue=await modalConferencia(res,f.name);
+            if(!segue){toast('Envio cancelado.');return;}
+            obsConf='ENVIADO COM DIVERGENCIA ('+new Date().toLocaleString('pt-BR')+'): '+res.avisos.map(function(a){return a.replace(/<[^>]+>/g,'');}).join(' | ');
+          }
+        }catch(errc){ obsConf='Nao foi possivel conferir o arquivo automaticamente: '+(errc.message||errc); }
         var nome=f.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9._-]/g,'_');
         var feitos=[];
         for(var k=0;k<e.usinas.length;k++){
@@ -1247,11 +1355,18 @@ window.A={
           }
           var path=us1.id+'/'+mes.slice(0,7)+'/'+Date.now()+'_'+nome;
           var up=await sb.storage.from('documentos').upload(path,f);if(up.error)throw up.error;
-          var r=await sb.from('documentos').insert({usina_id:us1.id,ciclo_id:cic.id,uc_id:e.uc.id,tipo:tipo,storage_path:path,nome_arquivo:f.name,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email,ref_leitura:qual==='demo'?null:(e.prox||null)});
+          var r=await sb.from('documentos').insert({usina_id:us1.id,ciclo_id:cic.id,uc_id:e.uc.id,tipo:tipo,storage_path:path,nome_arquivo:f.name,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email,ref_leitura:qual==='demo'?null:(e.prox||null),validacao:obsConf});
           if(r.error)throw r.error;
           feitos.push(us1.nome+' ('+mesLbl(mes)+')');
         }
-        toast((qual==='demo'?'Demonstrativo':'Conta')+' enviada: '+feitos.join(', ')+'. Item criado na fila do Claude.');
+        // a propria conta traz a proxima leitura: atualiza o cadastro da UC na hora
+        if(qual!=='demo'&&lido&&lido.prox&&!obsConf){
+          var pb=lido.prox.split('/'), pi=pb[2]+'-'+pb[1]+'-'+pb[0];
+          var ab=lido.atual?lido.atual.split('/'):null, ai=ab?ab[2]+'-'+ab[1]+'-'+ab[0]:null;
+          var upd={proxima_leitura:pi,proxima_leitura_estimada:false};if(ai)upd.ultima_leitura=ai;
+          await sb.from('ucs').update(upd).eq('id',e.uc.id);
+        }
+        toast((qual==='demo'?'Demonstrativo':'Conta')+' enviada: '+feitos.join(', ')+(obsConf?' (registrada com divergencia)':'')+'. Item criado na fila do Claude.');
         loadEntrada().catch(fail);
       }catch(err){fail(err);}
     };
