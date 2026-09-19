@@ -191,7 +191,7 @@ function renderShell(){
   el('app').innerHTML='<header class="topbar"><div class="wrap">'+brand()+
   '<nav><button id="nv-dash" onclick="go(&quot;dash&quot;)">Usinas</button>'+
   '<button id="nv-cli" onclick="go(&quot;cli&quot;)">Clientes</button>'+
-  '<button id="nv-cob" onclick="go(&quot;cob&quot;)">Cobranca</button>'+
+  '<button id="nv-cob" onclick="go(&quot;cob&quot;)">Financeiro</button>'+
   '<button id="nv-site" onclick="go(&quot;site&quot;)">Site</button>'+
   '<button id="nv-adm" onclick="go(&quot;adm&quot;)">Administracao</button></nav>'+
   '<div class="userchip"><span><b>'+esc(S.perfil.nome)+'</b> &middot; '+(S.perfil.papel==='admin'?'Admin':'Operacao')+'</span><button onclick="A.sair()">Sair</button></div>'+
@@ -347,8 +347,7 @@ async function loadDash(){
   h+='<div class="kpis">';
   h+='<div class="kpi"><div class="l">Usinas ativas</div><div class="v">'+ativas.length+'</div></div>';
   h+='<div class="kpi"><div class="l">Ciclos concluidos</div><div class="v">'+conclMes+' / '+ativas.length+'</div><div class="d">no ciclo mais recente de cada usina</div></div>';
-  h+='<div class="kpi"><div class="l">Faturas em aberto</div><div class="v">'+fab.length+'</div><div class="d">'+money(vab)+'</div></div>';
-  h+='<div class="kpi"'+(atrasadas.length?' style="border-color:var(--bad)"':'')+'><div class="l">Em atraso</div><div class="v">'+atrasadas.length+'</div><div class="d">faturas vencidas sem pagamento</div></div>';
+  h+='<div class="kpi" style="cursor:pointer" onclick="A.caixaEntrada()" title="Abrir a caixa de entrada"><div class="l">Caixa de entrada</div><div class="v">&mdash;</div><div class="d">em configuracao</div></div>';
   var nSaida=S.saida.filter(function(d){return !S.saidaFila[d.id];}).length, nNaFila=S.saida.length-nSaida;
   h+='<div class="kpi" style="cursor:pointer;'+(nSaida?'border-color:var(--info, #2f6fb0)':'')+'" onclick="A.caixaSaida()" title="Abrir a caixa de saida"><div class="l">Caixa de saida</div><div class="v">'+nSaida+'</div><div class="d">'+(nSaida?'documento'+(nSaida>1?'s':'')+' sem enviar &mdash; clique para enviar':'nada pendente de envio')+(nNaFila?' &middot; '+nNaFila+' ja na fila':'')+'</div></div>';
   h+='<div class="kpi"'+(fila.length?' style="border-color:var(--gold)"':'')+'><div class="l">Fila do Claude</div><div class="v">'+fila.length+'</div><div class="d">'+(fila.length?'solicitacoes aguardando &mdash; diga &quot;roda a fila&quot;':'nenhuma solicitacao pendente')+'</div></div>';
@@ -886,7 +885,7 @@ async function loadCobranca(){
   if(S.cobCliente===undefined)S.cobCliente='';
   var nomes={};
   S.cobFat.forEach(function(f){if(f.clientes&&f.clientes.nome)nomes[f.clientes.nome]=1;if(f.clientes&&f.clientes.grupo)nomes[f.clientes.grupo]=1;});
-  var h='<div class="pagehead"><h1>Central de Cobranca</h1><span class="sub">Faturas ABRAPE e boletos Banco Inter</span></div>';
+  var h='<div class="pagehead"><h1>Financeiro</h1><span class="sub">Faturas ABRAPE, boletos Banco Inter e recebimentos</span></div>';
   h+='<div id="cobKpis"></div>';
   h+='<div class="panel"><div id="cobAbas"></div>';
   h+='<div class="cobbar"><div id="cobStatus"></div>';
@@ -922,6 +921,9 @@ function renderCob(){
   var k='';
   if(termo)k+='<p class="note" style="margin:-6px 0 12px">Mostrando apenas: <b>'+esc(S.cobCliente)+'</b></p>';
   k+='<div class="kpis">';
+  var nAberto=grupos.receber.length+grupos.vencidas.length;
+  k+='<div class="kpi"><div class="l">Faturas em aberto</div><div class="v">'+nAberto+'</div><div class="d">'+money(soma(grupos.receber)+soma(grupos.vencidas))+'</div></div>';
+  k+='<div class="kpi"'+(grupos.vencidas.length?' style="border-color:var(--bad)"':'')+'><div class="l">Em atraso</div><div class="v">'+grupos.vencidas.length+'</div><div class="d">faturas vencidas sem pagamento</div></div>';
   k+='<div class="kpi"><div class="l">Contas a Receber</div><div class="v">'+money(soma(grupos.receber))+'</div><div class="d">'+grupos.receber.length+' faturas no prazo</div></div>';
   k+='<div class="kpi"'+(grupos.vencidas.length?' style="border-color:var(--bad)"':'')+'><div class="l">Contas Vencidas</div><div class="v">'+money(soma(grupos.vencidas))+'</div><div class="d">'+grupos.vencidas.length+' faturas vencidas</div></div>';
   k+='<div class="kpi"><div class="l">Total a Receber</div><div class="v">'+money(soma(grupos.receber)+soma(grupos.vencidas))+'</div><div class="d">no prazo + vencidas</div></div>';
@@ -1146,6 +1148,9 @@ window.A={
       }catch(e){fail(e);}
     };
     inp.click();
+  },
+  caixaEntrada:function(){
+    A.modal('<h2>Caixa de entrada</h2><p class="empty">Em configuracao &mdash; o conteudo da caixa de entrada sera definido em seguida.</p><div style="margin-top:14px"><button class="btn sec" onclick="A.closeModal()">Fechar</button></div>');
   },
   caixaSaida:function(){
     var ds=(S.saida||[]).filter(function(d){return !S.saidaFila[d.id];});
