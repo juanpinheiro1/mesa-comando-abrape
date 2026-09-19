@@ -69,6 +69,8 @@ main{padding-block:26px 60px}
 #uhint ul.hint-l li.ok:before{background:var(--ok)}#uhint ul.hint-l li.bad:before{background:var(--bad)}#uhint ul.hint-l li.warn:before{background:var(--warn)}#uhint ul.hint-l li.gold:before{background:var(--gold)}#uhint ul.hint-l li.info:before{background:var(--info, #2f6fb0)}
 #uhint ul.hint-l li.sub{padding-left:26px}#uhint ul.hint-l li.sub:before{left:14px;width:5px;height:5px}
 @media (hover:none){#uhint{display:none!important}}
+.kpi.kpi-alerta{background:color-mix(in srgb, var(--bad) 16%, var(--surface));border-color:var(--bad)}
+.kpi.kpi-alerta .v{color:var(--bad)}
 .cobbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
 .cobbusca{display:flex;align-items:center;gap:6px;margin-left:auto;flex:1;min-width:240px;max-width:460px}
 .cobbusca input{flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink);font-family:inherit;font-size:14px}
@@ -426,7 +428,7 @@ async function loadDash(){
   h+='<div class="kpi"><div class="l">Ciclos concluidos</div><div class="v">'+conclMes+' / '+ativas.length+'</div><div class="d">no ciclo mais recente de cada usina</div></div>';
   h+='<div class="kpi" id="kpi-entrada" style="cursor:pointer" onclick="A.caixaEntrada()" title="Abrir a caixa de entrada"><div class="l">Caixa de entrada</div><div class="v">&hellip;</div><div class="d">contas de energia a buscar</div></div>';
   var nSaida=S.saida.filter(function(d){return !S.saidaFila[d.id];}).length, nNaFila=S.saida.length-nSaida;
-  h+='<div class="kpi" style="cursor:pointer;'+(nSaida?'border-color:var(--info, #2f6fb0)':'')+'" onclick="A.caixaSaida()" title="Abrir a caixa de saida"><div class="l">Caixa de saida</div><div class="v">'+nSaida+'</div><div class="d">'+(nSaida?'documento'+(nSaida>1?'s':'')+' sem enviar &mdash; clique para enviar':'nada pendente de envio')+(nNaFila?' &middot; '+nNaFila+' ja na fila':'')+'</div></div>';
+  h+='<div class="kpi'+(nSaida?' kpi-alerta':'')+'" style="cursor:pointer" onclick="A.caixaSaida()" title="Abrir a caixa de saida"><div class="l">Caixa de saida</div><div class="v">'+nSaida+'</div><div class="d">'+(nSaida?'documento'+(nSaida>1?'s':'')+' sem enviar &mdash; clique para enviar':'nada pendente de envio')+(nNaFila?' &middot; '+nNaFila+' ja na fila':'')+'</div></div>';
   h+='<div class="kpi"'+(fila.length?' style="border-color:var(--gold)"':'')+'><div class="l">Fila do Claude</div><div class="v">'+fila.length+'</div><div class="d">'+(fila.length?'solicitacoes aguardando &mdash; diga &quot;roda a fila&quot;':'nenhuma solicitacao pendente')+'</div></div>';
   h+='</div><div class="grid">';
 
@@ -574,7 +576,7 @@ async function loadDash(){
     }
   }
   el('main').innerHTML=h;
-  dadosEntrada().then(function(d){var n=d.lista.filter(function(e){return e.vencida;}).length;var k=el('kpi-entrada');if(!k)return;k.querySelector('.v').textContent=n;k.querySelector('.d').textContent=n?'conta'+(n>1?'s':'')+' de energia a buscar - clique para enviar':'nenhuma conta pendente';if(n)k.style.borderColor='var(--bad)';}).catch(function(){});
+  dadosEntrada().then(function(d){var n=d.lista.filter(function(e){return e.vencida;}).length;var k=el('kpi-entrada');if(!k)return;k.querySelector('.v').textContent=n;k.querySelector('.d').textContent=n?'conta'+(n>1?'s':'')+' de energia a buscar - clique para enviar':'nenhuma conta pendente';if(n)k.classList.add('kpi-alerta');else k.classList.remove('kpi-alerta');}).catch(function(){});
 }
 
 // ---------- USINA ----------
