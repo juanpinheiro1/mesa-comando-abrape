@@ -207,9 +207,82 @@ function go(v,arg){
   if(v==='cli')loadClientes().catch(fail);
   if(v==='cob')loadCobranca().catch(fail);
   if(v==='adm')loadAdmin().catch(fail);
+  if(v==='entrada'){el('nv-dash').classList.add('on');loadEntrada().catch(fail);}
 }
 
 var TIPOS_ENVIO=['relatorio_cliente','boleto','relatorio_investidor'];
+// ---------- CAIXA DE ENTRADA (contas de energia provavelmente disponiveis) ----------
+function hojeLocal(){var d=new Date();return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);}
+async function dadosEntrada(){
+  var q=await Promise.all([
+    sb.from('usinas').select('id,nome,uc_geradora_id,ativo').eq('ativo',true),
+    sb.from('rateios').select('usina_id,uc_id,vigencia_fim').is('vigencia_fim',null),
+    sb.from('ucs').select('id,numero_uc,tipo,proxima_leitura,proxima_leitura_estimada, clientes(nome)'),
+    sb.from('documentos').select('uc_id,tipo,ref_leitura,criado_em,ciclo_id, ciclos(mes_referencia,usina_id)').in('tipo',['conta_uc_recebedora','conta_geradora']).not('uc_id','is',null),
+    sb.from('ciclos').select('id,usina_id,mes_referencia,mes_geracao,status')
+  ]);
+  for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
+  var us=q[0].data, ucMap={};q[2].data.forEach(function(u){ucMap[u.id]=u;});
+  var ent={};
+  var add=function(ucId,usina,papel){var u=ucMap[ucId];if(!u)return;var e=ent[ucId]||(ent[ucId]={uc:u,usinas:[],papel:papel});if(e.usinas.indexOf(usina)<0)e.usinas.push(usina);if(papel==='geradora')e.papel='geradora';};
+  us.forEach(function(u){if(u.uc_geradora_id)add(u.uc_geradora_id,u,'geradora');});
+  var ativa={};us.forEach(function(u){ativa[u.id]=u;});
+  q[1].data.forEach(function(r){if(ativa[r.usina_id])add(r.uc_id,ativa[r.usina_id],'recebedora');});
+  var docs=q[3].data;
+  var hoje=hojeLocal();
+  var lista=Object.keys(ent).map(function(k){
+    var e=ent[k],u=e.uc;
+    e.prox=u.proxima_leitura||null;
+    e.atendida=!!(e.prox&&docs.some(function(d){return d.uc_id===k&&d.ref_leitura&&String(d.ref_leitura).slice(0,10)===String(e.prox).slice(0,10);}));
+    e.vencida=!!(e.prox&&String(e.prox).slice(0,10)<=hoje&&!e.atendida);
+    e.dias=e.prox?Math.round((new Date(hoje)-new Date(String(e.prox).slice(0,10)))/86400000):null;
+    // ciclo de destino por usina: ciclo seguinte ao da ultima conta desta UC nesta usina
+    e.alvo={};e.usinas.forEach(function(us1){
+      var ult=docs.filter(function(d){return d.uc_id===k&&d.ciclos&&d.ciclos.usina_id===us1.id;}).map(function(d){return String(d.ciclos.mes_referencia).slice(0,10);}).sort().pop();
+      var mes;
+      if(ult){var dd=new Date(ult+'T12:00:00');dd.setMonth(dd.getMonth()+1);mes=dd.toISOString().slice(0,7)+'-01';}
+      else if(e.prox){var dp=new Date(String(e.prox).slice(0,10)+'T12:00:00');if(e.papel==='geradora'&&dp.getDate()>=15)dp.setMonth(dp.getMonth()+1);mes=dp.toISOString().slice(0,7)+'-01';}
+      if(!mes){
+        var cs=q[4].data.filter(function(c){return c.usina_id===us1.id;}).sort(function(a,b){return String(b.mes_referencia).localeCompare(String(a.mes_referencia));});
+        var aberto=cs.filter(function(c){return c.status!=='concluido';})[0];
+        if(aberto)mes=String(aberto.mes_referencia).slice(0,10);
+        else if(cs[0]){var d2=new Date(String(cs[0].mes_referencia).slice(0,10)+'T12:00:00');d2.setMonth(d2.getMonth()+1);mes=d2.toISOString().slice(0,7)+'-01';}
+      }
+      e.alvo[us1.id]=mes;
+    });
+    return e;
+  });
+  return {lista:lista,ciclos:q[4].data};
+}
+async function loadEntrada(){
+  var d=await dadosEntrada();S.entrada=d;
+  var hoje=hojeLocal();
+  var em7=new Date(Date.now()+7*86400000).toISOString().slice(0,10);
+  var venc=d.lista.filter(function(e){return e.vencida;}).sort(function(a,b){return String(a.prox).localeCompare(String(b.prox));});
+  var prox=d.lista.filter(function(e){return e.prox&&!e.vencida&&!e.atendida&&String(e.prox).slice(0,10)>hoje&&String(e.prox).slice(0,10)<=em7;}).sort(function(a,b){return String(a.prox).localeCompare(String(b.prox));});
+  var semData=d.lista.filter(function(e){return !e.prox;});
+  var nomeUC=function(e){return (e.uc.clientes?esc(e.uc.clientes.nome):(e.papel==='geradora'?'UC geradora':'UC'))+' <span style="color:var(--muted);font-size:12px" class="mono">'+esc(e.uc.numero_uc)+'</span>';};
+  var usinasTxt=function(e){return e.usinas.map(function(u){return '<a href="#" onclick="event.preventDefault();go(&quot;usina&quot;,&quot;'+u.id+'&quot;)">'+esc(u.nome)+'</a>';}).join('<br>');};
+  var linhas=function(arr,comBotao){
+    var x='<div class="tblwrap"><table><tr><th>UC</th><th>Tipo</th><th>Usina</th><th>Leitura prevista</th><th></th></tr>';
+    arr.forEach(function(e){
+      var i=d.lista.indexOf(e);
+      x+='<tr><td>'+nomeUC(e)+'</td><td>'+(e.papel==='geradora'?'<span class="chip gold">Geradora</span>':'<span class="chip">Recebedora</span>')+'</td><td>'+usinasTxt(e)+'</td>';
+      x+='<td>'+(e.prox?dt(e.prox):'&mdash;')+(e.uc.proxima_leitura_estimada?' <span class="chip" title="Data estimada: ultima conta na Mesa e antiga">estimada</span>':'')+(e.vencida?'<br><span style="font-size:12px;color:var(--bad)">'+(e.dias===0?'hoje':'ha '+e.dias+' dia'+(e.dias===1?'':'s'))+'</span>':'')+'</td>';
+      x+='<td style="white-space:nowrap">'+(comBotao?'<button class="btn mini" onclick="A.entradaUpload('+i+',&quot;conta&quot;)">Enviar conta</button>'+(e.papel==='geradora'?' <button class="btn sec mini" onclick="A.entradaUpload('+i+',&quot;demo&quot;)">Demonstrativo</button>':''):'<button class="btn sec mini" onclick="A.entradaUpload('+i+',&quot;conta&quot;)">Enviar antecipado</button>')+'</td></tr>';
+    });
+    return x+'</table></div>';
+  };
+  var h='<div class="pagehead"><button class="btn sec mini" onclick="go(&quot;dash&quot;)">&larr; Painel</button><h1>Caixa de entrada</h1><span class="sub">Contas de energia provavelmente disponiveis (data de leitura ja chegou)</span></div>';
+  h+='<div class="panel"'+(venc.length?' style="border-color:var(--bad)"':'')+'><h2>Contas a buscar ('+venc.length+')</h2>';
+  h+='<p class="note" style="margin-bottom:10px">A data da proxima leitura impressa na ultima conta de cada UC ja passou e a conta nova ainda nao foi enviada. Ao enviar, o arquivo entra no ciclo da usina e na fila do Claude, e sai desta lista.</p>';
+  h+=venc.length?linhas(venc,true):'<p class="empty">Nenhuma conta pendente &mdash; tudo em dia.</p>';
+  h+='</div>';
+  if(prox.length)h+='<div class="panel"><h2>Proximos 7 dias ('+prox.length+')</h2>'+linhas(prox,false)+'</div>';
+  if(semData.length)h+='<div class="panel"><h2>Sem data de leitura ('+semData.length+')</h2><p class="note" style="margin-bottom:10px">UCs sem nenhuma conta na Mesa para ler a proxima leitura. Assim que a primeira conta for enviada, a data passa a ser controlada.</p>'+linhas(semData,true)+'</div>';
+  el('main').innerHTML=h;
+}
+
 // ---------- DASHBOARD ----------
 async function loadDash(){
   var hoje=new Date();
@@ -347,7 +420,7 @@ async function loadDash(){
   h+='<div class="kpis">';
   h+='<div class="kpi"><div class="l">Usinas ativas</div><div class="v">'+ativas.length+'</div></div>';
   h+='<div class="kpi"><div class="l">Ciclos concluidos</div><div class="v">'+conclMes+' / '+ativas.length+'</div><div class="d">no ciclo mais recente de cada usina</div></div>';
-  h+='<div class="kpi" style="cursor:pointer" onclick="A.caixaEntrada()" title="Abrir a caixa de entrada"><div class="l">Caixa de entrada</div><div class="v">&mdash;</div><div class="d">em configuracao</div></div>';
+  h+='<div class="kpi" id="kpi-entrada" style="cursor:pointer" onclick="A.caixaEntrada()" title="Abrir a caixa de entrada"><div class="l">Caixa de entrada</div><div class="v">&hellip;</div><div class="d">contas de energia a buscar</div></div>';
   var nSaida=S.saida.filter(function(d){return !S.saidaFila[d.id];}).length, nNaFila=S.saida.length-nSaida;
   h+='<div class="kpi" style="cursor:pointer;'+(nSaida?'border-color:var(--info, #2f6fb0)':'')+'" onclick="A.caixaSaida()" title="Abrir a caixa de saida"><div class="l">Caixa de saida</div><div class="v">'+nSaida+'</div><div class="d">'+(nSaida?'documento'+(nSaida>1?'s':'')+' sem enviar &mdash; clique para enviar':'nada pendente de envio')+(nNaFila?' &middot; '+nNaFila+' ja na fila':'')+'</div></div>';
   h+='<div class="kpi"'+(fila.length?' style="border-color:var(--gold)"':'')+'><div class="l">Fila do Claude</div><div class="v">'+fila.length+'</div><div class="d">'+(fila.length?'solicitacoes aguardando &mdash; diga &quot;roda a fila&quot;':'nenhuma solicitacao pendente')+'</div></div>';
@@ -497,6 +570,7 @@ async function loadDash(){
     }
   }
   el('main').innerHTML=h;
+  dadosEntrada().then(function(d){var n=d.lista.filter(function(e){return e.vencida;}).length;var k=el('kpi-entrada');if(!k)return;k.querySelector('.v').textContent=n;k.querySelector('.d').textContent=n?'conta'+(n>1?'s':'')+' de energia a buscar - clique para enviar':'nenhuma conta pendente';if(n)k.style.borderColor='var(--bad)';}).catch(function(){});
 }
 
 // ---------- USINA ----------
@@ -1146,8 +1220,36 @@ window.A={
     };
     inp.click();
   },
-  caixaEntrada:function(){
-    A.modal('<h2>Caixa de entrada</h2><p class="empty">Em configuracao &mdash; o conteudo da caixa de entrada sera definido em seguida.</p><div style="margin-top:14px"><button class="btn sec" onclick="A.closeModal()">Fechar</button></div>');
+  caixaEntrada:function(){go('entrada');},
+  entradaUpload:function(i,qual){
+    var e=S.entrada.lista[i];if(!e)return;
+    var inp=document.createElement('input');inp.type='file';inp.accept='application/pdf,.pdf';
+    inp.onchange=async function(){
+      try{
+        var f=inp.files[0];if(!f)return;
+        var tipo=qual==='demo'?'demonstrativo_energisa':(e.papel==='geradora'?'conta_geradora':'conta_uc_recebedora');
+        var nome=f.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9._-]/g,'_');
+        var feitos=[];
+        for(var k=0;k<e.usinas.length;k++){
+          var us1=e.usinas[k], mes=e.alvo[us1.id];
+          if(!mes)throw new Error('Nao consegui definir o ciclo da '+us1.nome+'.');
+          var cic=S.entrada.ciclos.filter(function(c){return c.usina_id===us1.id&&String(c.mes_referencia).slice(0,10)===mes;})[0];
+          if(!cic){
+            var g=new Date(mes+'T12:00:00');g.setMonth(g.getMonth()-1);
+            var rc=await sb.from('ciclos').insert({usina_id:us1.id,mes_referencia:mes,mes_geracao:g.toISOString().slice(0,7)+'-01',status:'aberto'}).select().single();
+            if(rc.error)throw rc.error;cic=rc.data;S.entrada.ciclos.push(cic);
+          }
+          var path=us1.id+'/'+mes.slice(0,7)+'/'+Date.now()+'_'+nome;
+          var up=await sb.storage.from('documentos').upload(path,f);if(up.error)throw up.error;
+          var r=await sb.from('documentos').insert({usina_id:us1.id,ciclo_id:cic.id,uc_id:e.uc.id,tipo:tipo,storage_path:path,nome_arquivo:f.name,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email,ref_leitura:qual==='demo'?null:(e.prox||null)});
+          if(r.error)throw r.error;
+          feitos.push(us1.nome+' ('+mesLbl(mes)+')');
+        }
+        toast((qual==='demo'?'Demonstrativo':'Conta')+' enviada: '+feitos.join(', ')+'. Item criado na fila do Claude.');
+        loadEntrada().catch(fail);
+      }catch(err){fail(err);}
+    };
+    inp.click();
   },
   caixaSaida:function(){
     var ds=(S.saida||[]).filter(function(d){return !S.saidaFila[d.id];});
