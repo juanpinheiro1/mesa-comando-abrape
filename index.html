@@ -214,12 +214,14 @@ async function loadDash(){
     sb.from('documentos').select('ciclo_id,uc_id,tipo').not('ciclo_id','is',null),
     sb.from('compensacoes').select('ciclo_id,uc_id,status'),
     sb.from('lembretes').select('*').is('resolvido_em',null).order('criado_em'),
-    sb.from('documentos').select('id,nome_arquivo,tipo,ciclo_id,usina_id,uc_id,criado_em, usinas(nome), ciclos(mes_referencia)').is('enviado_em',null).in('tipo',TIPOS_ENVIO).not('ciclo_id','is',null)
+    sb.from('documentos').select('id,nome_arquivo,tipo,ciclo_id,usina_id,uc_id,criado_em, usinas(nome), ciclos(mes_referencia)').is('enviado_em',null).in('tipo',TIPOS_ENVIO).not('ciclo_id','is',null),
+    sb.from('solicitacoes').select('id,status,observacoes,criado_em,concluido_em,solicitado_por').eq('tipo','atencao').neq('status','cancelada').order('criado_em',{ascending:false}).limit(300)
   ]);
   for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
   var usinas=q[0].data;S.usinas=usinas;
   var lembretes=q[10].data||[];
   S.saida=q[11].data||[];
+  S.respAt={};(q[12].data||[]).forEach(function(r){try{var o=JSON.parse(r.observacoes||'{}');if(o.item_key&&!S.respAt[o.item_key]){r.o=o;S.respAt[o.item_key]=r;}}catch(e){}});
   S.saidaFila={};q[4].data.forEach(function(x){if(x.tipo==='enviar'){try{(JSON.parse(x.observacoes||'{}').documentos||[]).forEach(function(id){S.saidaFila[id]=1;});}catch(e){}}});
   var docsCiclo={};q[8].data.forEach(function(d){(docsCiclo[d.ciclo_id]=docsCiclo[d.ciclo_id]||[]).push(d);});
   var compsCiclo={};q[9].data.forEach(function(x){(compsCiclo[x.ciclo_id]=compsCiclo[x.ciclo_id]||[]).push(x);});
@@ -387,27 +389,33 @@ async function loadDash(){
   var itens=[];
   lembretes.forEach(function(l){
     var un=usinas.filter(function(u){return u.id===l.usina_id;})[0];
-    itens.push({uid:l.usina_id, lid:l.id, txt:'<b>Lembrete'+(un?' &middot; '+esc(un.nome):'')+':</b> '+esc(l.texto)+' <span style="color:var(--muted);font-size:12px">('+dt(l.criado_em)+')</span>', tipo:'info'});
+    itens.push({key:'lembrete:'+l.id, uid:l.usina_id, lid:l.id, txt:'<b>Lembrete'+(un?' &middot; '+esc(un.nome):'')+':</b> '+esc(l.texto)+' <span style="color:var(--muted);font-size:12px">('+dt(l.criado_em)+')</span>', tipo:'info'});
   });
   atrasadas.forEach(function(f){
     var un=usinas.filter(function(u){return f.ciclos&&u.id===f.ciclos.usina_id;})[0];
-    itens.push({uid:un?un.id:null, txt:'Fatura '+(f.numero?f.numero+'/'+f.ano:'s/n')+' &middot; '+esc(f.clientes?f.clientes.nome:'')+' &middot; '+money(f.valor)+' &middot; venceu '+dt(f.vencimento)+(un?' &mdash; '+esc(un.nome):''), tipo:'bad'});
+    itens.push({key:'fatura:'+f.id, uid:un?un.id:null, txt:'Fatura '+(f.numero?f.numero+'/'+f.ano:'s/n')+' &middot; '+esc(f.clientes?f.clientes.nome:'')+' &middot; '+money(f.valor)+' &middot; venceu '+dt(f.vencimento)+(un?' &mdash; '+esc(un.nome):''), tipo:'bad'});
   });
   ativas.forEach(function(u){
     var c=latest[u.id];
-    if(c&&pendCiclo[c.id])itens.push({uid:u.id, txt:esc(u.nome)+' &middot; ciclo '+mesLbl(c.mes_referencia)+': '+pendCiclo[c.id]+' UC(s) com apuracao pendente/verificar', tipo:'warn'});
+    if(c&&pendCiclo[c.id])itens.push({key:'pend:'+c.id, cid:c.id, uid:u.id, txt:esc(u.nome)+' &middot; ciclo '+mesLbl(c.mes_referencia)+': '+pendCiclo[c.id]+' UC(s) com apuracao pendente/verificar', tipo:'warn'});
     var pi=proxInfo(u);
-    if(pi&&pi.overdue)itens.push({uid:u.id, txt:esc(u.nome)+' &middot; leitura da geradora em '+dts(pi.d)+' &mdash; coletar a conta de energia e iniciar o novo ciclo', tipo:'bad'});
+    if(pi&&pi.overdue)itens.push({key:'leitura:'+u.id+':'+pi.d, uid:u.id, txt:esc(u.nome)+' &middot; leitura da geradora em '+dts(pi.d)+' &mdash; coletar a conta de energia e iniciar o novo ciclo', tipo:'bad'});
   });
-  fila.forEach(function(s){
+  fila.filter(function(s){return s.tipo!=='atencao';}).forEach(function(s){
     itens.push({uid:s.usina_id, txt:'Fila do Claude: '+({processar:'processar',faturar:'faturar',enviar:'enviar relatorios',novo_documento:'arquivo novo para atualizar'}[s.tipo])+' &middot; '+esc(s.usinas?s.usinas.nome:'')+' &middot; ciclo '+(s.ciclos?mesLbl(s.ciclos.mes_referencia):'')+' (solicitado '+dt(s.criado_em)+')', tipo:'gold'});
   });
   h+='<div class="panel" style="margin-top:22px'+(itens.length?';border-color:var(--warn)':'')+'"><div style="display:flex;align-items:center;gap:10px"><h2 style="margin:0">Atencao</h2><button class="btn sec mini" style="margin-left:auto" onclick="A.novoLembrete(null)">+ Lembrete</button></div><div style="height:10px"></div>';
   if(!itens.length)h+='<p class="empty">Nada exigindo acao no momento &mdash; tudo em dia.</p>';
   else{h+='<div class="tblwrap"><table>';
-    itens.forEach(function(it){
-      h+='<tr><td style="width:14px"><span class="dot" style="background:var(--'+(it.tipo==='bad'?'bad':it.tipo==='warn'?'warn':it.tipo==='info'?'info, #2f6fb0':'gold')+')"></span></td><td>'+it.txt+'</td>';
-      h+='<td style="white-space:nowrap">'+(it.lid?'<button class="btn sec mini" onclick="A.resolverLembrete(&quot;'+it.lid+'&quot;)">Resolvido</button> ':'')+(it.uid?'<button class="btn sec mini" onclick="go(&quot;usina&quot;,&quot;'+it.uid+'&quot;)">Abrir</button>':'')+'</td></tr>';
+    S.atItens=itens;
+    itens.forEach(function(it,ix){
+      var rs=it.key?S.respAt[it.key]:null, rtxt='';
+      if(rs){
+        var st=rs.status==='pendente'?'<span class="chip warn">Solucao proposta &middot; aguardando fila</span>':rs.status==='em_execucao'?'<span class="chip info">Com o Juan para decisao</span>':'<span class="chip ok">Decidido'+(rs.concluido_em?' '+dt(rs.concluido_em):'')+'</span>';
+        rtxt='<div style="margin-top:6px;font-size:12.5px;color:var(--muted)">'+st+' <b>Proposta:</b> '+esc(rs.o.solucao||'')+(rs.o.decisao?'<br><b>Decisao final:</b> '+esc(rs.o.decisao):'')+'</div>';
+      }
+      h+='<tr><td style="width:14px"><span class="dot" style="background:var(--'+(it.tipo==='bad'?'bad':it.tipo==='warn'?'warn':it.tipo==='info'?'info, #2f6fb0':'gold')+')"></span></td><td>'+it.txt+rtxt+'</td>';
+      h+='<td style="white-space:nowrap">'+(it.key&&(!rs||rs.status!=='em_execucao')?'<button class="btn mini" onclick="A.responderAtencao('+ix+')">'+(rs&&rs.status==='pendente'?'Editar resposta':'Responder')+'</button> ':'')+(it.lid?'<button class="btn sec mini" onclick="A.resolverLembrete(&quot;'+it.lid+'&quot;)">Resolvido</button> ':'')+(it.uid?'<button class="btn sec mini" onclick="go(&quot;usina&quot;,&quot;'+it.uid+'&quot;)">Abrir</button>':'')+'</td></tr>';
     });h+='</table></div>';}
   h+='</div>';
 
@@ -559,7 +567,7 @@ function renderUsinaTab(){
         h+='<span style="color:var(--muted);font-size:12.5px">Geracao de '+mesLbl(cs.mes_geracao)+'</span>';
         h+='<button class="btn sec mini" style="margin-left:auto" onclick="A.verCiclo(null)">Fechar detalhe</button></div>';
         var sols=(S.u.sol||[]).filter(function(s){return s.ciclo_id===cs.id;});
-        var TIPOSOL={processar:'Processar o ciclo',faturar:'Aprovar e faturar',enviar:'Enviar relatorios',novo_documento:'Arquivo novo &mdash; atualizar'};
+        var TIPOSOL={processar:'Processar o ciclo',faturar:'Aprovar e faturar',enviar:'Enviar relatorios',novo_documento:'Arquivo novo &mdash; atualizar',atencao:'Resposta a alerta'};
         var acao=null, hint='';
         if(cs.status==='aberto'||cs.status==='documentos'){acao='processar';hint='O Claude extrai os dados dos documentos enviados, roda o ledger por UC e deixa o ciclo Conferido para revisao.';}
         else if(cs.status==='conferido'){acao='faturar';hint='O Claude gera as faturas (serie geral), os relatorios individuais, o demonstrativo ABRAPE, o dashboard da usina e emite os boletos no Inter.';}
@@ -1087,6 +1095,28 @@ window.A={
     x+='</table></div>';
     x+='<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="A.enviarSaida()">Enviar selecionados</button><button class="btn sec" onclick="A.closeModal()">Cancelar</button></div>';
     A.modal(x);
+  },
+  responderAtencao:function(ix){
+    var it=(S.atItens||[])[ix];if(!it)return;
+    var rs=S.respAt[it.key];var prob=it.txt.replace(/<[^>]+>/g,'').replace(/&middot;/g,'·').replace(/&mdash;/g,'—').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim();
+    S.atResp={it:it,prob:prob,rs:rs&&rs.status==='pendente'?rs:null};
+    var x='<h2>Responder ao alerta</h2><p class="note" style="margin-bottom:8px"><b>Problema:</b> '+esc(prob)+'</p>';
+    x+='<label style="font-size:12px;color:var(--muted);font-weight:600;letter-spacing:.05em;text-transform:uppercase">Solucao proposta</label>';
+    x+='<textarea id="at-sol" rows="5" style="width:100%;margin-top:6px;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink);font-family:inherit;font-size:14px" placeholder="Ex.: cliente pagou em 20/09 por PIX direto na conta; baixar a fatura.">'+(S.atResp.rs?esc(S.atResp.rs.o.solucao||''):'')+'</textarea>';
+    x+='<p class="note" style="margin-top:8px">A resposta entra na fila do Claude. Quando o Juan disser &quot;roda a fila&quot;, o problema e a solucao proposta sao apresentados a ele, que da a decisao final.</p>';
+    x+='<div style="margin-top:14px;display:flex;gap:8px"><button class="btn" onclick="A.enviarRespostaAtencao()">Enviar para a fila</button><button class="btn sec" onclick="A.closeModal()">Cancelar</button></div>';
+    A.modal(x);setTimeout(function(){var t=el('at-sol');if(t)t.focus();},50);
+  },
+  enviarRespostaAtencao:async function(){
+    try{
+      var r=S.atResp;var sol=(el('at-sol').value||'').trim();if(!sol)throw new Error('Escreva a solucao proposta.');
+      var obs=JSON.stringify({item_key:r.it.key,problema:r.prob,solucao:sol,usina_id:r.it.uid||null});
+      var q;
+      if(r.rs)q=await sb.from('solicitacoes').update({observacoes:obs,solicitado_por:S.perfil.email}).eq('id',r.rs.id);
+      else q=await sb.from('solicitacoes').insert({usina_id:r.it.uid||null,ciclo_id:r.it.cid||null,tipo:'atencao',solicitado_por:S.perfil.email,observacoes:obs});
+      if(q.error)throw q.error;
+      A.closeModal();toast('Resposta registrada na fila do Claude.');loadDash().catch(fail);
+    }catch(e){fail(e);}
   },
   saidaTodos:function(v){document.querySelectorAll('.saida_cb').forEach(function(c){c.checked=v;});},
   enviarSaida:async function(){
