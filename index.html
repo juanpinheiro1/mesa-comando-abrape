@@ -1294,13 +1294,14 @@ window.A={
     inp.onchange=async function(){
       try{
         var f=inp.files[0];if(!f)return;
-        var obsConf=null;
+        var obsConf=null, lido2=null;
         var ucRef=(S.u.rateios||[]).filter(function(r){return r.uc_id===ucId;})[0];
         var ucInfo=ucRef&&ucRef.ucs?ucRef.ucs:(ucId&&S.u.ger_uc&&S.u.ger_uc.id===ucId?S.u.ger_uc:null);
         if(ucInfo&&tipo!=='outro'){
           try{
             toast('Conferindo o arquivo\u2026');
             var res2=conferirConta(await textoDoPdf(f),{numero_uc:ucInfo.numero_uc,matricula:ucInfo.matricula,prox:ucInfo.proxima_leitura},tipo==='demonstrativo_energisa'?'demo':'conta');
+            lido2=res2.dados;
             if(res2.avisos.length){
               var segue2=await modalConferencia(res2,f.name);
               if(!segue2){toast('Envio cancelado.');return;}
@@ -1316,6 +1317,11 @@ window.A={
         if(up.error)throw up.error;
         var r=await sb.from('documentos').insert({usina_id:S.usinaId,ciclo_id:cicloId,uc_id:ucId||null,tipo:tipo,storage_path:path,nome_arquivo:f.name,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email,validacao:obsConf});
         if(r.error)throw r.error;
+        if(ucId&&tipo!=='demonstrativo_energisa'&&lido2&&lido2.prox&&!obsConf){
+          var pb2=lido2.prox.split('/'), upd2={proxima_leitura:pb2[2]+'-'+pb2[1]+'-'+pb2[0],proxima_leitura_estimada:false};
+          if(lido2.atual){var ab2=lido2.atual.split('/');upd2.ultima_leitura=ab2[2]+'-'+ab2[1]+'-'+ab2[0];}
+          await sb.from('ucs').update(upd2).eq('id',ucId);
+        }
         toast('Documento anexado'+(obsConf?' (com divergencia registrada)':'')+'. Item criado na fila do Claude.');loadUsina().catch(fail);
       }catch(e){fail(e);}
     };
