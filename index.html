@@ -921,9 +921,6 @@ function renderCob(){
   var k='';
   if(termo)k+='<p class="note" style="margin:-6px 0 12px">Mostrando apenas: <b>'+esc(S.cobCliente)+'</b></p>';
   k+='<div class="kpis">';
-  var nAberto=grupos.receber.length+grupos.vencidas.length;
-  k+='<div class="kpi"><div class="l">Faturas em aberto</div><div class="v">'+nAberto+'</div><div class="d">'+money(soma(grupos.receber)+soma(grupos.vencidas))+'</div></div>';
-  k+='<div class="kpi"'+(grupos.vencidas.length?' style="border-color:var(--bad)"':'')+'><div class="l">Em atraso</div><div class="v">'+grupos.vencidas.length+'</div><div class="d">faturas vencidas sem pagamento</div></div>';
   k+='<div class="kpi"><div class="l">Contas a Receber</div><div class="v">'+money(soma(grupos.receber))+'</div><div class="d">'+grupos.receber.length+' faturas no prazo</div></div>';
   k+='<div class="kpi"'+(grupos.vencidas.length?' style="border-color:var(--bad)"':'')+'><div class="l">Contas Vencidas</div><div class="v">'+money(soma(grupos.vencidas))+'</div><div class="d">'+grupos.vencidas.length+' faturas vencidas</div></div>';
   k+='<div class="kpi"><div class="l">Total a Receber</div><div class="v">'+money(soma(grupos.receber)+soma(grupos.vencidas))+'</div><div class="d">no prazo + vencidas</div></div>';
