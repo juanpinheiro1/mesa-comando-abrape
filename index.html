@@ -300,7 +300,7 @@ async function dadosEntrada(){
   var q=await Promise.all([
     sb.from('usinas').select('id,nome,uc_geradora_id,ativo').eq('ativo',true),
     sb.from('rateios').select('usina_id,uc_id,vigencia_fim').is('vigencia_fim',null),
-    sb.from('ucs').select('id,numero_uc,matricula,tipo,proxima_leitura,proxima_leitura_estimada,ultima_leitura, clientes(nome)'),
+    sb.from('ucs').select('id,numero_uc,apelido,matricula,tipo,proxima_leitura,proxima_leitura_estimada,ultima_leitura, clientes(nome)'),
     sb.from('documentos').select('uc_id,tipo,ref_leitura,criado_em,ciclo_id, ciclos(mes_referencia,usina_id)').in('tipo',['conta_uc_recebedora','conta_geradora']).not('uc_id','is',null),
     sb.from('ciclos').select('id,usina_id,mes_referencia,mes_geracao,status')
   ]);
@@ -345,7 +345,7 @@ async function loadEntrada(){
   var venc=d.lista.filter(function(e){return e.vencida;}).sort(function(a,b){return String(a.prox).localeCompare(String(b.prox));});
   var prox=d.lista.filter(function(e){return e.prox&&!e.vencida&&!e.atendida&&String(e.prox).slice(0,10)>hoje&&String(e.prox).slice(0,10)<=em7;}).sort(function(a,b){return String(a.prox).localeCompare(String(b.prox));});
   var semData=d.lista.filter(function(e){return !e.prox;});
-  var nomeUC=function(e){return (e.uc.clientes?esc(e.uc.clientes.nome):(e.papel==='geradora'?'UC geradora':'UC'))+' <span style="color:var(--muted);font-size:12px" class="mono">'+esc(e.uc.numero_uc)+'</span>';};
+  var nomeUC=function(e){return (e.uc.clientes?esc(e.uc.clientes.nome):(e.papel==='geradora'?'UC geradora':'UC'))+(e.uc.apelido?' <b>'+esc(e.uc.apelido)+'</b>':'')+' <span style="color:var(--muted);font-size:12px" class="mono">'+esc(e.uc.numero_uc)+'</span>';};
   var usinasTxt=function(e){return e.usinas.map(function(u){return '<a href="#" onclick="event.preventDefault();go(&quot;usina&quot;,&quot;'+u.id+'&quot;)">'+esc(u.nome)+'</a>';}).join('<br>');};
   var linhas=function(arr,comBotao){
     var x='<div class="tblwrap"><table><tr><th>UC</th><th>Tipo</th><th>Usina</th><th>Ultima conta na Mesa</th><th>Conta esperada</th><th></th></tr>';
@@ -380,7 +380,7 @@ async function loadDash(){
     sb.from('faturas_abrape').select('id,numero,ano,valor,vencimento,status,ciclo_id, clientes(nome), ciclos(usina_id,mes_referencia)'),
     sb.from('boletos').select('valor,status'),
     sb.from('solicitacoes').select('id,tipo,ciclo_id,usina_id,criado_em,observacoes, usinas(nome), ciclos(mes_referencia)').eq('status','pendente'),
-    sb.from('rateios').select('usina_id,uc_id,vigencia_inicio,vigencia_fim,percentual, ucs(numero_uc,tipo,clientes(nome))'),
+    sb.from('rateios').select('usina_id,uc_id,vigencia_inicio,vigencia_fim,percentual, ucs(numero_uc,apelido,tipo,clientes(nome))'),
     sb.from('compensacoes').select('ciclo_id,status').in('status',['pendente','verificar']),
     sb.from('ucs').select('id,proxima_leitura'),
     sb.from('documentos').select('ciclo_id,uc_id,tipo,nome_arquivo').not('ciclo_id','is',null),
@@ -521,7 +521,7 @@ async function loadDash(){
     var ds=docsCiclo[c.id]||[], cs=compsCiclo[c.id]||[], disp=c.docs_dispensados||[];
     var mg=String(c.mes_geracao||c.mes_referencia).slice(0,10);
     var rats={};q[5].data.forEach(function(r){if(r.usina_id!==u.id||!r.ucs||r.ucs.tipo==='geradora')return;if(r.vigencia_inicio&&String(r.vigencia_inicio).slice(0,10)>mg)return;if(r.vigencia_fim&&String(r.vigencia_fim).slice(0,10)<mg)return;rats[r.uc_id]=r;});
-    var nomeUC=function(id){var r=rats[id];if(!r){var rr=q[5].data.filter(function(x){return x.uc_id===id&&x.ucs;})[0];r=rr;}return r&&r.ucs?(r.ucs.clientes?r.ucs.clientes.nome:r.ucs.numero_uc)+' <span class="hint-m">('+r.ucs.numero_uc+')</span>':'UC';};
+    var nomeUC=function(id){var r=rats[id];if(!r){var rr=q[5].data.filter(function(x){return x.uc_id===id&&x.ucs;})[0];r=rr;}if(!r||!r.ucs)return 'UC';var u=r.ucs;return (u.clientes?u.clientes.nome:u.numero_uc)+(u.apelido?' &ndash; '+u.apelido:'')+' <span class="hint-m">('+u.numero_uc+')</span>';};
     var linha=function(ok,txt,cls){return '<li class="'+(cls||(ok?'ok':'bad'))+'">'+txt+'</li>';};
     // documentos
     var L='';
@@ -666,7 +666,7 @@ async function loadUsina(){
   var q=await Promise.all([
     sb.from('usinas').select('*').eq('id',id).single(),
     sb.from('ciclos').select('*').eq('usina_id',id).order('mes_referencia',{ascending:false}),
-    sb.from('rateios').select('*, ucs(id,numero_uc,matricula,proxima_leitura,endereco,cidade,tipo,multi_fonte,clientes(id,nome))').eq('usina_id',id),
+    sb.from('rateios').select('*, ucs(id,numero_uc,apelido,matricula,proxima_leitura,endereco,cidade,tipo,multi_fonte,clientes(id,nome))').eq('usina_id',id),
     sb.from('condicoes_comerciais').select('*').eq('usina_id',id),
     sb.from('geracao_mensal').select('*').eq('usina_id',id).order('mes_geracao',{ascending:false}),
     sb.from('documentos').select('*, ciclos(mes_referencia)').eq('usina_id',id).order('criado_em',{ascending:false}),
@@ -717,7 +717,7 @@ function ucsDoCiclo(cs){
     if(vistos[r.uc_id])return false;vistos[r.uc_id]=1;return true;
   }).sort(function(a,b){return Number(b.percentual||0)-Number(a.percentual||0);});
 }
-function ucRot(r){var c=r.ucs&&r.ucs.clientes?r.ucs.clientes.nome:'';return (r.ucs?r.ucs.numero_uc:'')+(c?' - '+c:'');}
+function ucRot(r){var u=r.ucs||{},c=u.clientes?u.clientes.nome:'';return (u.numero_uc||'')+(u.apelido?' ('+u.apelido+')':'')+(c?' - '+c:'');}
 function normTxt(t){return String(t||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();}
 function checklistCiclo(cs,cdocs,comps){
   var itens=[];
