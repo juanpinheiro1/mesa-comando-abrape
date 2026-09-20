@@ -338,7 +338,7 @@ function renderGrupos(){
   h+='<div class="mesnav">';
   if(G.grupos.length>1){h+='<select class="inline" onchange="A.grpSel(this.value)">'+G.grupos.map(function(x){return '<option value="'+x.id+'"'+(x.id===S.grpId?' selected':'')+'>'+esc(x.nome)+'</option>';}).join('')+'</select>';}
   h+='<select class="inline" onchange="A.grpCiclo(this.value)">'+cs.map(function(x){return '<option value="'+x.id+'"'+(x.id===S.grpCiclo?' selected':'')+'>'+mesLbl(x.mes_referencia)+'</option>';}).join('')+'</select>';
-  h+='<button class="btn sec mini" onclick="A.grpNovoCiclo()">+ Novo mes</button>';
+  h+='<button class="btn mini" onclick="A.grpNovoCiclo()">+ Abrir novo ciclo</button>';
   h+='</div></div>';
   if(!c){el('main').innerHTML=h+'<p class="empty">Nenhum ciclo neste grupo ainda. Use &quot;+ Novo mes&quot; para abrir o primeiro.</p>';return;}
   var naFila=(G.fila||[]).filter(function(x){return x.grupo_ciclo_id===c.id;}).length;
@@ -354,8 +354,12 @@ function renderGrupos(){
   h+='<div class="panel" style="margin-bottom:16px"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
   h+='<b>Ciclo '+mesLbl(c.mes_referencia)+'</b>'+chip({aberto:['Aberto','warn'],processado:['Processado','info'],fechado:['Fechado','ok']},c.status);
   h+='<button class="btn mini" style="margin-left:auto" onclick="A.grpUpload()">Enviar contas do mes</button>';
+  h+='<button class="btn sec mini" onclick="A.grpNovoCiclo()">Abrir novo ciclo</button>';
   h+='<button class="btn sec mini" onclick="A.grpProcessar()">'+(naFila?'Na fila do Claude ('+naFila+')':'Pedir processamento')+'</button>';
   h+='</div>';
+  var mesAtual=hojeLocal().slice(0,7)+'-01';
+  if(!cs.some(function(x){return String(x.mes_referencia).slice(0,10)===mesAtual;}))
+    h+='<p class="note" style="margin-top:10px">O ciclo de <b>'+mesLbl(mesAtual)+'</b> ainda nao foi aberto. Use <b>Abrir novo ciclo</b> (ou envie as contas pela Caixa de entrada, que abre o ciclo sozinha).</p>';
   if(c.observacoes)h+='<p class="note" style="margin-top:10px">'+esc(c.observacoes)+'</p>';
   h+='</div>';
   // tabela por UC
@@ -1453,7 +1457,10 @@ window.A={
   grpSel:function(v){S.grpId=v;S.grpCiclo=null;loadGrupos().catch(fail);},
   grpCiclo:function(v){S.grpCiclo=v;renderGrupos();},
   grpNovoCiclo:async function(){
-    var m=window.prompt('Mes do novo ciclo (AAAA-MM):',new Date().toISOString().slice(0,7));
+    var cs0=(S.grp.ciclos||[]).filter(function(x){return x.grupo_id===S.grpId;}).map(function(x){return String(x.mes_referencia).slice(0,7);}).sort();
+    var sug=hojeLocal().slice(0,7);
+    if(cs0.length){var d0=new Date(cs0[cs0.length-1]+'-01T12:00:00');d0.setMonth(d0.getMonth()+1);sug=d0.toISOString().slice(0,7);}
+    var m=window.prompt('Mes do novo ciclo (AAAA-MM):',sug);
     if(!m||!/^\d{4}-\d{2}$/.test(m))return;
     try{var r=await sb.from('grupo_ciclos').insert({grupo_id:S.grpId,mes_referencia:m+'-01',status:'aberto'}).select().single();
       if(r.error)throw r.error;S.grpCiclo=r.data.id;toast('Ciclo '+mesLbl(m+'-01')+' aberto.');loadGrupos().catch(fail);}catch(e){fail(e);}
