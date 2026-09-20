@@ -398,7 +398,11 @@ async function dadosEntrada(){
     sb.from('rateios').select('usina_id,uc_id,vigencia_fim').is('vigencia_fim',null),
     sb.from('ucs').select('id,numero_uc,apelido,matricula,tipo,proxima_leitura,proxima_leitura_estimada,ultima_leitura, clientes(nome)'),
     sb.from('documentos').select('uc_id,tipo,ref_leitura,criado_em,ciclo_id, ciclos(mes_referencia,usina_id)').in('tipo',['conta_uc_recebedora','conta_geradora']).not('uc_id','is',null),
-    sb.from('ciclos').select('id,usina_id,mes_referencia,mes_geracao,status')
+    sb.from('ciclos').select('id,usina_id,mes_referencia,mes_geracao,status'),
+    sb.from('grupos').select('id,nome').eq('ativo',true),
+    sb.from('grupo_ucs').select('id,grupo_id,apelido,matricula,numero_uc,uc_id,proxima_leitura,ultima_leitura,proxima_leitura_estimada,ativo'),
+    sb.from('grupo_ciclos').select('id,grupo_id,mes_referencia,status'),
+    sb.from('grupo_documentos').select('grupo_uc_id,ref_leitura')
   ]);
   for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
   var us=q[0].data, ucMap={};q[2].data.forEach(function(u){ucMap[u.id]=u;});
@@ -432,6 +436,28 @@ async function dadosEntrada(){
     });
     return e;
   });
+  // ---- UCs de grupos (gestao de grupos) que nao sao recebedoras de usina ABRAPE ----
+  var grupos={};(q[5].data||[]).forEach(function(g){grupos[g.id]=g;});
+  var gdocs=q[8].data||[], gcic=q[7].data||[];
+  (q[6].data||[]).forEach(function(gu){
+    if(gu.ativo===false)return;
+    if(gu.uc_id&&ent[gu.uc_id])return; // ja aparece pela usina ABRAPE
+    var prox=gu.proxima_leitura||null;
+    var atendida=!!(prox&&gdocs.some(function(d){return d.grupo_uc_id===gu.id&&d.ref_leitura&&String(d.ref_leitura).slice(0,10)===String(prox).slice(0,10);}));
+    var mesAlvo=null;
+    var cs=gcic.filter(function(c){return c.grupo_id===gu.grupo_id;}).sort(function(a,b){return String(b.mes_referencia).localeCompare(String(a.mes_referencia));});
+    var aberto=cs.filter(function(c){return c.status!=='fechado';})[0];
+    if(prox)mesAlvo=String(prox).slice(0,7)+'-01';
+    else if(aberto)mesAlvo=String(aberto.mes_referencia).slice(0,10);
+    lista.push({
+      uc:{id:gu.id,numero_uc:gu.numero_uc||gu.matricula,apelido:gu.apelido,matricula:gu.matricula,proxima_leitura:prox,ultima_leitura:gu.ultima_leitura,proxima_leitura_estimada:gu.proxima_leitura_estimada},
+      papel:'grupo', grupo:grupos[gu.grupo_id]||{id:gu.grupo_id,nome:'Grupo'}, grupo_uc_id:gu.id,
+      usinas:[{id:gu.grupo_id,nome:(grupos[gu.grupo_id]||{}).nome||'Grupo',grupo:true}],
+      prox:prox, atendida:atendida, vencida:!!(prox&&String(prox).slice(0,10)<=hoje&&!atendida),
+      dias:prox?Math.round((new Date(hoje)-new Date(String(prox).slice(0,10)))/86400000):null,
+      alvo:(function(){var o={};o[gu.grupo_id]=mesAlvo;return o;})(), ultCiclo:{}
+    });
+  });
   return {lista:lista,ciclos:q[4].data};
 }
 async function loadEntrada(){
@@ -441,14 +467,14 @@ async function loadEntrada(){
   var venc=d.lista.filter(function(e){return e.vencida;}).sort(function(a,b){return String(a.prox).localeCompare(String(b.prox));});
   var prox=d.lista.filter(function(e){return e.prox&&!e.vencida&&!e.atendida&&String(e.prox).slice(0,10)>hoje&&String(e.prox).slice(0,10)<=em7;}).sort(function(a,b){return String(a.prox).localeCompare(String(b.prox));});
   var semData=d.lista.filter(function(e){return !e.prox;});
-  var nomeUC=function(e){return (e.uc.clientes?esc(e.uc.clientes.nome):(e.papel==='geradora'?'UC geradora':'UC'))+(e.uc.apelido?' <b>'+esc(e.uc.apelido)+'</b>':'')+' <span style="color:var(--muted);font-size:12px" class="mono">'+esc(e.uc.numero_uc)+'</span>';};
-  var usinasTxt=function(e){return e.usinas.map(function(u){return '<a href="#" onclick="event.preventDefault();go(&quot;usina&quot;,&quot;'+u.id+'&quot;)">'+esc(u.nome)+'</a>';}).join('<br>');};
+  var nomeUC=function(e){return (e.uc.clientes?esc(e.uc.clientes.nome):(e.papel==='geradora'?'UC geradora':e.papel==='grupo'?esc(e.grupo.nome):'UC'))+(e.uc.apelido?' <b>'+esc(e.uc.apelido)+'</b>':'')+' <span style="color:var(--muted);font-size:12px" class="mono">'+esc(e.uc.numero_uc)+'</span>';};
+  var usinasTxt=function(e){return e.usinas.map(function(u){return u.grupo?'<a href="#" onclick="event.preventDefault();A.irGrupo(&quot;'+u.id+'&quot;)">'+esc(u.nome)+'</a>':'<a href="#" onclick="event.preventDefault();go(&quot;usina&quot;,&quot;'+u.id+'&quot;)">'+esc(u.nome)+'</a>';}).join('<br>');};
   var linhas=function(arr,comBotao){
-    var x='<div class="tblwrap"><table><tr><th>UC</th><th>Tipo</th><th>Usina</th><th>Ultima conta na Mesa</th><th>Conta esperada</th><th></th></tr>';
+    var x='<div class="tblwrap"><table><tr><th>UC</th><th>Tipo</th><th>Usina / Grupo</th><th>Ultima conta na Mesa</th><th>Conta esperada</th><th></th></tr>';
     arr.forEach(function(e){
       var i=d.lista.indexOf(e);
-      x+='<tr><td>'+nomeUC(e)+'</td><td>'+(e.papel==='geradora'?'<span class="chip gold">Geradora</span>':'<span class="chip">Recebedora</span>')+'</td><td>'+usinasTxt(e)+'</td>';
-      var ultTxt=e.usinas.map(function(u){var c=(e.ultCiclo||{})[u.id];return c?'ciclo '+mesLbl(c):'&mdash;';}).join('<br>');
+      x+='<tr><td>'+nomeUC(e)+'</td><td>'+(e.papel==='geradora'?'<span class="chip gold">Geradora</span>':e.papel==='grupo'?'<span class="chip info">Grupo</span>':'<span class="chip">Recebedora</span>')+'</td><td>'+usinasTxt(e)+'</td>';
+      var ultTxt=e.papel==='grupo'?(e.uc.ultima_leitura?'ciclo do grupo':'&mdash;'):e.usinas.map(function(u){var c=(e.ultCiclo||{})[u.id];return c?'ciclo '+mesLbl(c):'&mdash;';}).join('<br>');
       var alvoTxt=e.usinas.map(function(u){var c=(e.alvo||{})[u.id];return c?'&rarr; ciclo '+mesLbl(c):'';}).join('<br>');
       x+='<td style="font-size:13px">'+(e.uc.ultima_leitura?'leitura '+dt(e.uc.ultima_leitura)+'<br>':'')+'<span style="color:var(--muted)">'+ultTxt+'</span></td>';
       x+='<td>'+(e.prox?'leitura '+dt(e.prox):'&mdash;')+(e.uc.proxima_leitura_estimada?' <span class="chip" title="Data estimada: ultima conta na Mesa e antiga">estimada</span>':'')+(e.vencida?' <span style="font-size:12px;color:var(--bad)">('+(e.dias===0?'hoje':'ha '+e.dias+' dia'+(e.dias===1?'':'s'))+')</span>':'')+'<br><span style="font-size:12px;color:var(--muted)">'+alvoTxt+'</span></td>';
@@ -458,7 +484,7 @@ async function loadEntrada(){
   };
   var h='<div class="pagehead"><button class="btn sec mini" onclick="go(&quot;dash&quot;)">&larr; Painel</button><h1>Caixa de entrada</h1><span class="sub">Contas de energia provavelmente disponiveis (data de leitura ja chegou)</span></div>';
   h+='<div class="panel"'+(venc.length?' style="border-color:var(--bad)"':'')+'><h2>Contas a buscar ('+venc.length+')</h2>';
-  h+='<p class="note" style="margin-bottom:10px">A <b>proxima leitura</b> impressa na ultima conta de cada UC ja passou, entao a conta <b>seguinte</b> (do ciclo indicado em &quot;Conta esperada&quot;) provavelmente ja esta disponivel na distribuidora e ainda nao foi enviada. Ao enviar, o arquivo entra no ciclo da usina e na fila do Claude, e sai desta lista.</p>';
+  h+='<p class="note" style="margin-bottom:10px">A <b>proxima leitura</b> impressa na ultima conta de cada UC ja passou, entao a conta <b>seguinte</b> (do ciclo indicado em &quot;Conta esperada&quot;) provavelmente ja esta disponivel na distribuidora e ainda nao foi enviada. Ao enviar, o arquivo entra no ciclo da usina (ou do grupo) e na fila do Claude, e sai desta lista.</p>';
   h+=venc.length?linhas(venc,true):'<p class="empty">Nenhuma conta pendente &mdash; tudo em dia.</p>';
   h+='</div>';
   if(prox.length)h+='<div class="panel"><h2>Proximos 7 dias ('+prox.length+')</h2>'+linhas(prox,false)+'</div>';
@@ -1448,8 +1474,13 @@ window.A={
           // tenta identificar a loja pelo nome do arquivo (apelido cadastrado)
           var base=f.name.replace(/\.[^.]+$/,'').trim().toLowerCase();
           var uc=(S.grp.ucs||[]).filter(function(u){return u.grupo_id===S.grpId&&u.apelido&&(u.apelido.toLowerCase()===base||base.indexOf(u.apelido.toLowerCase())===0);})[0];
-          var r=await sb.from('grupo_documentos').insert({ciclo_id:c.id,grupo_uc_id:uc?uc.id:null,nome_arquivo:f.name,storage_path:path,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email});
+          var lido=null;
+          try{ var txt=await textoDoPdf(f); var dd=conferirConta(txt,{numero_uc:(uc&&uc.numero_uc)||'',matricula:(uc&&uc.matricula)||'',prox:uc?uc.proxima_leitura:null},'conta'); lido=dd.dados;
+            if(!uc&&lido&&lido.uc){ var alvo=(S.grp.ucs||[]).filter(function(x){return x.grupo_id===S.grpId&&(String(x.numero_uc||'').replace(/\D/g,'')===String(lido.uc).replace(/\D/g,''));})[0]; if(alvo)uc=alvo; }
+          }catch(e2){}
+          var r=await sb.from('grupo_documentos').insert({ciclo_id:c.id,grupo_uc_id:uc?uc.id:null,nome_arquivo:f.name,storage_path:path,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email,ref_leitura:uc?uc.proxima_leitura:null});
           if(r.error)throw r.error;okN++;
+          if(uc&&lido&&lido.prox)await A.grpAtualizaLeitura(uc.id,lido);
         }catch(e){erros.push(f.name);}
       }
       try{
@@ -1468,9 +1499,62 @@ window.A={
     try{var r=await sb.from('solicitacoes').insert({tipo:'processar_grupo',grupo_ciclo_id:c.id,solicitado_por:S.perfil.email,observacoes:JSON.stringify({grupo:S.grpId,mes:c.mes_referencia})});
       if(r.error)throw r.error;toast('Pedido registrado na fila do Claude.');loadGrupos().catch(fail);}catch(e){fail(e);}
   },
+  entradaUploadGrupo:function(e){
+    var inp=document.createElement('input');inp.type='file';inp.accept='application/pdf,.pdf';
+    inp.onchange=async function(){
+      try{
+        var f=inp.files[0];if(!f)return;
+        var obsConf=null, lido=null;
+        try{
+          toast('Conferindo o arquivo\u2026');
+          var res=conferirConta(await textoDoPdf(f),{numero_uc:e.uc.numero_uc,matricula:e.uc.matricula,prox:e.prox},'conta');
+          lido=res.dados;
+          if(res.avisos.length){
+            if(!await modalConferencia(res,f.name)){toast('Envio cancelado.');return;}
+            obsConf='ENVIADO COM DIVERGENCIA ('+new Date().toLocaleString('pt-BR')+'): '+res.avisos.map(function(a){return a.replace(/<[^>]+>/g,'');}).join(' | ');
+          }
+        }catch(errc){obsConf='Nao foi possivel conferir o arquivo automaticamente: '+(errc.message||errc);}
+        var mes=e.alvo[e.grupo.id]||((lido&&lido.atual?lido.atual.split('/')[2]+'-'+lido.atual.split('/')[1]:hojeLocal().slice(0,7))+'-01');
+        var cic=await A.grpAchaOuCriaCiclo(e.grupo.id,mes);
+        var nome=f.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9._-]/g,'_');
+        var path='grupos/'+e.grupo.id+'/'+mes.slice(0,7)+'/'+Date.now()+'_'+nome;
+        var up=await sb.storage.from('documentos').upload(path,f);if(up.error)throw up.error;
+        var r=await sb.from('grupo_documentos').insert({ciclo_id:cic.id,grupo_uc_id:e.uc.id,nome_arquivo:f.name,storage_path:path,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email,validacao:obsConf,ref_leitura:e.prox||null});
+        if(r.error)throw r.error;
+        await A.grpFilaDoc(cic.id);
+        if(lido&&lido.prox&&!obsConf)await A.grpAtualizaLeitura(e.uc.id,lido);
+        toast('Conta enviada para '+esc(e.grupo.nome)+' ('+mesLbl(mes)+')'+(obsConf?' com divergencia':'')+'. Item na fila do Claude.');
+        loadEntrada().catch(fail);
+      }catch(err){fail(err);}
+    };
+    inp.click();
+  },
+  grpAchaOuCriaCiclo:async function(grupoId,mes){
+    var r=await sb.from('grupo_ciclos').select('*').eq('grupo_id',grupoId).eq('mes_referencia',mes);
+    if(r.error)throw r.error;
+    if(r.data&&r.data.length)return r.data[0];
+    var i=await sb.from('grupo_ciclos').insert({grupo_id:grupoId,mes_referencia:mes,status:'aberto'}).select().single();
+    if(i.error)throw i.error;return i.data;
+  },
+  grpFilaDoc:async function(cicloId){
+    var j=await sb.from('solicitacoes').select('id').eq('status','pendente').eq('grupo_ciclo_id',cicloId).eq('tipo','grupo_documento');
+    if(!j.error&&j.data&&j.data.length)return;
+    await sb.from('solicitacoes').insert({tipo:'grupo_documento',grupo_ciclo_id:cicloId,solicitado_por:S.perfil.email,observacoes:JSON.stringify({origem:'upload'})});
+  },
+  grpAtualizaLeitura:async function(grupoUcId,lido){
+    try{
+      var pb=lido.prox.split('/'), upd={proxima_leitura:pb[2]+'-'+pb[1]+'-'+pb[0],proxima_leitura_estimada:false};
+      if(lido.atual){var ab=lido.atual.split('/');upd.ultima_leitura=ab[2]+'-'+ab[1]+'-'+ab[0];}
+      await sb.from('grupo_ucs').update(upd).eq('id',grupoUcId);
+      var g=await sb.from('grupo_ucs').select('uc_id').eq('id',grupoUcId).single();
+      if(!g.error&&g.data&&g.data.uc_id)await sb.from('ucs').update(upd).eq('id',g.data.uc_id);
+    }catch(e){}
+  },
   caixaEntrada:function(){go('entrada');},
+  irGrupo:function(id){S.grpId=id;S.grpCiclo=null;go('grp');},
   entradaUpload:function(i,qual){
     var e=S.entrada.lista[i];if(!e)return;
+    if(e.papel==='grupo')return A.entradaUploadGrupo(e);
     var inp=document.createElement('input');inp.type='file';inp.accept='application/pdf,.pdf';
     inp.onchange=async function(){
       try{
