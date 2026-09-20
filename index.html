@@ -1834,11 +1834,25 @@ window.A={
     }catch(e){fail(e);}
   },
   abrirDoc:async function(path){
+    var ehHtml=/\.html?$/i.test(String(path||''));
+    var win=null;
     try{
+      if(ehHtml){
+        // o Storage entrega HTML como texto puro (protecao contra XSS): baixamos e abrimos renderizado
+        win=window.open('','_blank');
+        if(win)win.document.write('<p style="font-family:system-ui;padding:24px;color:#555">Abrindo o painel&hellip;</p>');
+        var d=await sb.storage.from('documentos').download(path);
+        if(d.error)throw d.error;
+        var txt=await d.data.text();
+        var url=URL.createObjectURL(new Blob([txt],{type:'text/html;charset=utf-8'}));
+        if(win)win.location.replace(url); else window.open(url,'_blank');
+        setTimeout(function(){URL.revokeObjectURL(url);},60000);
+        return;
+      }
       var r=await sb.storage.from('documentos').createSignedUrl(path,3600);
       if(r.error)throw r.error;
       window.open(r.data.signedUrl,'_blank');
-    }catch(e){fail(e);}
+    }catch(e){if(win)win.close();fail(e);}
   },
   delDoc:async function(id,path){
     if(!window.confirm('Excluir este documento do banco e do arquivo? Essa acao nao tem volta.'))return;
