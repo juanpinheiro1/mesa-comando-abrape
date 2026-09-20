@@ -305,10 +305,11 @@ async function loadGrupos(){
     sb.from('grupo_usinas').select('*').order('nome'),
     sb.from('grupo_leituras').select('*'),
     sb.from('grupo_geracao').select('*'),
-    sb.from('solicitacoes').select('id,tipo,status,grupo_ciclo_id,criado_em').eq('status','pendente').not('grupo_ciclo_id','is',null)
+    sb.from('solicitacoes').select('id,tipo,status,grupo_ciclo_id,criado_em').eq('status','pendente').not('grupo_ciclo_id','is',null),
+    sb.from('grupo_documentos').select('id,ciclo_id,grupo_uc_id,tipo,nome_arquivo,storage_path,validacao,criado_em,enviado_por').order('criado_em',{ascending:false})
   ]);
   for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
-  var G={grupos:q[0].data,ciclos:q[1].data,ucs:q[2].data,usinas:q[3].data,leituras:q[4].data,ger:q[5].data,fila:q[6].data};
+  var G={grupos:q[0].data,ciclos:q[1].data,ucs:q[2].data,usinas:q[3].data,leituras:q[4].data,ger:q[5].data,fila:q[6].data,docs:q[7].data||[]};
   S.grp=G;
   if(!S.grpId||!G.grupos.some(function(g){return g.id===S.grpId;}))S.grpId=(G.grupos[0]||{}).id;
   var cs=G.ciclos.filter(function(c){return c.grupo_id===S.grpId;});
@@ -361,6 +362,20 @@ function renderGrupos(){
   if(!cs.some(function(x){return String(x.mes_referencia).slice(0,10)===mesAtual;}))
     h+='<p class="note" style="margin-top:10px">O ciclo de <b>'+mesLbl(mesAtual)+'</b> ainda nao foi aberto. Use <b>Abrir novo ciclo</b> (ou envie as contas pela Caixa de entrada, que abre o ciclo sozinha).</p>';
   if(c.observacoes)h+='<p class="note" style="margin-top:10px">'+esc(c.observacoes)+'</p>';
+  h+='</div>';
+  // dashboards e documentos do ciclo
+  var docs=(G.docs||[]).filter(function(d){return d.ciclo_id===c.id;});
+  var dash=docs.filter(function(d){return d.tipo==='dashboard';});
+  var contas=docs.filter(function(d){return d.tipo!=='dashboard';});
+  h+='<div class="panel"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h2 style="margin:0">Dashboards do ciclo</h2>';
+  h+='<button class="btn sec mini" style="margin-left:auto" onclick="A.grpAnexarDash()">Anexar dashboard</button></div><div style="height:10px"></div>';
+  if(!dash.length)h+='<p class="empty">Nenhum dashboard guardado neste ciclo.</p>';
+  else{h+='<div class="tblwrap"><table><tr><th>Documento</th><th>Quando</th><th>Observacao</th><th></th></tr>';
+    dash.forEach(function(d){
+      h+='<tr><td><b>'+esc(d.nome_arquivo)+'</b></td><td>'+dt(d.criado_em)+'</td><td style="font-size:12px;color:var(--muted);word-break:break-all">'+esc(d.validacao||'')+'</td>';
+      h+='<td style="white-space:nowrap"><button class="btn mini" onclick="A.abrirDoc(&quot;'+esc(d.storage_path)+'&quot;)">Abrir</button></td></tr>';
+    });h+='</table></div>';}
+  if(contas.length)h+='<p class="note" style="margin-top:10px">'+contas.length+' conta(s) de energia anexada(s) neste ciclo.</p>';
   h+='</div>';
   // tabela por UC
   h+='<div class="panel"><h2>UCs do grupo ('+lei.length+' com conta neste mes)</h2><div class="tblwrap"><table><tr><th>Loja</th><th>Matricula</th><th>Classe</th><th class="num">Consumo</th><th class="num">Creditos</th><th class="num">Nao compensado</th><th class="num">Saldo</th><th class="num">Fatura</th><th>Obs</th></tr>';
@@ -1533,6 +1548,24 @@ window.A={
         toast('Conta enviada para '+esc(e.grupo.nome)+' ('+mesLbl(mes)+')'+(obsConf?' com divergencia':'')+'. Item na fila do Claude.');
         loadEntrada().catch(fail);
       }catch(err){fail(err);}
+    };
+    inp.click();
+  },
+  grpAnexarDash:function(){
+    var c=(S.grp.ciclos||[]).filter(function(x){return x.id===S.grpCiclo;})[0];if(!c)return;
+    var inp=document.createElement('input');inp.type='file';inp.accept='.html,.htm,.pdf,application/pdf,text/html';
+    inp.onchange=async function(){
+      try{
+        var f=inp.files[0];if(!f)return;
+        var titulo=window.prompt('Nome do dashboard:',f.name.replace(/\.[^.]+$/,''));if(titulo===null)return;
+        var obs=window.prompt('Observacao (ex.: enviado a diretoria em dd/mm, link do artifact):','')||null;
+        var nome=f.name.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-zA-Z0-9._-]/g,'_');
+        var path='grupos/dashboards/'+String(c.mes_referencia).slice(0,7)+'/'+Date.now()+'_'+nome;
+        var up=await sb.storage.from('documentos').upload(path,f,{contentType:f.type||'text/html'});if(up.error)throw up.error;
+        var r=await sb.from('grupo_documentos').insert({ciclo_id:c.id,tipo:'dashboard',nome_arquivo:titulo||f.name,storage_path:path,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email,validacao:obs});
+        if(r.error)throw r.error;
+        toast('Dashboard guardado no ciclo.');loadGrupos().catch(fail);
+      }catch(e){fail(e);}
     };
     inp.click();
   },
