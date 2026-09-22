@@ -150,6 +150,7 @@ var STBOL={aberto:['Em aberto','warn'],pago:['Pago','ok'],vencido:['Vencido','ba
 function esc(s){if(s===null||s===undefined)return '';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function money(n){if(n===null||n===undefined||n==='')return '&mdash;';return Number(n).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});}
 function kwh(n){if(n===null||n===undefined||n==='')return '&mdash;';return Number(n).toLocaleString('pt-BR')+' kWh';}
+function fmtN(n){return Number(n).toLocaleString('pt-BR');}
 function mesLbl(d){if(!d)return '&mdash;';var p=String(d).split('-');return MESES[Number(p[1])-1]+'/'+p[0];}
 function dt(d){if(!d)return '&mdash;';var p=String(d).slice(0,10).split('-');return p[2]+'/'+p[1]+'/'+p[0];}
 function chip(map,k){var c=map[k]||[k,''];return '<span class="chip '+c[1]+'">'+esc(c[0])+'</span>';}
@@ -669,7 +670,7 @@ async function loadDash(){
     var L='';
     var isDemo=function(d){return d.tipo==='demonstrativo_energisa'||(d.tipo==='conta_geradora'&&/demonstr/i.test(d.nome_arquivo||''));};
     var temDemo=ds.some(isDemo), temConta=ds.some(function(d){return d.tipo==='conta_geradora'&&!isDemo(d);});
-    L+=linha(temConta||disp.indexOf('conta_geradora')>-1,'Conta da geradora'+(temConta?'':disp.indexOf('conta_geradora')>-1?' (dispensada)':' &mdash; pendente'),temConta?'ok':disp.indexOf('conta_geradora')>-1?'muted':'bad');
+    if(u.modelo!=='autoconsumo')L+=linha(temConta||disp.indexOf('conta_geradora')>-1,'Conta da geradora'+(temConta?'':disp.indexOf('conta_geradora')>-1?' (dispensada)':' &mdash; pendente'),temConta?'ok':disp.indexOf('conta_geradora')>-1?'muted':'bad');
     if(u.modelo!=='autoconsumo')L+=linha(temDemo,'Demonstrativo da geradora'+(temDemo?'':disp.indexOf('demonstrativo_energisa')>-1?' (dispensado)':' &mdash; pendente'),temDemo?'ok':disp.indexOf('demonstrativo_energisa')>-1?'muted':'bad');
     var pendUC=[];Object.keys(rats).forEach(function(id){
       var tem=ds.some(function(d){return d.uc_id===id&&d.tipo==='conta_uc_recebedora';})||cs.some(function(x){return x.uc_id===id&&x.status==='ok';});
@@ -818,10 +819,11 @@ async function loadUsina(){
     sb.from('clientes').select('id,nome').order('nome'),
     sb.from('compensacoes').select('*, ucs(numero_uc,clientes(nome)), ciclos!inner(usina_id)').eq('ciclos.usina_id',id),
     sb.from('solicitacoes').select('*').eq('usina_id',id).order('criado_em',{ascending:false}),
-    sb.from('lembretes').select('*').eq('usina_id',id).is('resolvido_em',null).order('criado_em')
+    sb.from('lembretes').select('*').eq('usina_id',id).is('resolvido_em',null).order('criado_em'),
+    sb.from('geracao_medidores').select('*').eq('usina_id',id)
   ]);
   for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
-  S.u={usina:q[0].data,ciclos:q[1].data,rateios:q[2].data,cond:q[3].data,ger:q[4].data,docs:q[5].data,comp:q[7].data,sol:q[8].data,lemb:q[9].data||[]};
+  S.u={usina:q[0].data,ciclos:q[1].data,rateios:q[2].data,cond:q[3].data,ger:q[4].data,docs:q[5].data,comp:q[7].data,sol:q[8].data,lemb:q[9].data||[],gmed:q[10].data||[]};
   S.clientes=q[6].data;
   var fr=await sb.from('faturas_abrape').select('*, clientes(nome), ciclos!inner(usina_id,mes_referencia)').eq('ciclos.usina_id',id).order('criado_em',{ascending:false});
   if(fr.error)throw fr.error;
@@ -870,8 +872,16 @@ function checklistCiclo(cs,cdocs,comps){
   var demo=ger.filter(function(d){return d.tipo==='demonstrativo_energisa'||/demonstr/.test(normTxt(d.nome_arquivo));});
   var conta=ger.filter(function(d){return demo.indexOf(d)<0;});
   var gid=S.u.usina.uc_geradora_id||'';
-  itens.push({rot:'UC geradora &mdash; conta Energisa',ok:conta.length>0,arq:conta.map(function(d){return d.nome_arquivo;}),uc:gid,tipo:'conta_geradora'});
-  itens.push({rot:'UC geradora &mdash; demonstrativo de compensacao',ok:demo.length>0,arq:demo.map(function(d){return d.nome_arquivo;}),uc:gid,tipo:'demonstrativo_energisa'});
+  var auto=S.u.usina.modelo==='autoconsumo', meds=S.u.usina.medidores_internos||[];
+  if(!auto){
+    itens.push({rot:'UC geradora &mdash; conta Energisa',ok:conta.length>0,arq:conta.map(function(d){return d.nome_arquivo;}),uc:gid,tipo:'conta_geradora'});
+    itens.push({rot:'UC geradora &mdash; demonstrativo de compensacao',ok:demo.length>0,arq:demo.map(function(d){return d.nome_arquivo;}),uc:gid,tipo:'demonstrativo_energisa'});
+  }
+  meds.forEach(function(m){
+    var g=(S.u.gmed||[]).filter(function(x){return x.ciclo_id===cs.id&&x.medidor===m.cod;})[0];
+    var ok=!!(g&&g.geracao_kwh!=null);
+    itens.push({rot:'Geracao '+esc(m.nome)+' &mdash; medidor interno',ok:ok,arq:ok?[fmtN(g.geracao_kwh)+' kWh'+(g.data_leitura?' (leitura '+dt(g.data_leitura)+')':'')]:[],uc:'',tipo:'geracao:'+m.cod,med:true});
+  });
   var soltas=cdocs.filter(function(d){return d.tipo==='conta_uc_recebedora'&&!d.uc_id;});
   ucsDoCiclo(cs).forEach(function(r){
     var lig=cdocs.filter(function(d){return d.tipo==='conta_uc_recebedora'&&d.uc_id===r.uc_id;});
@@ -889,7 +899,7 @@ function checklistCiclo(cs,cdocs,comps){
     var ok=lig.length>0||prov.length>0||!!cp;
     var arq=lig.map(function(d){return d.nome_arquivo;}).concat(prov.map(function(d){return d.nome_arquivo+' (provavel)';}));
     if(!ok&&!arq.length&&cp)arq=['apurada'];
-    itens.push({rot:'Conta da UC '+esc(ucRot(r))+' <span style="color:var(--muted)">('+Number(r.percentual||0)+'%)</span>',ok:ok,arq:arq,uc:r.uc_id,tipo:'conta_uc_recebedora',apurada:!!cp&&!lig.length&&!prov.length});
+    itens.push({rot:'Conta da UC '+esc(ucRot(r))+(auto?'':' <span style="color:var(--muted)">('+Number(r.percentual||0)+'%)</span>'),ok:ok,arq:arq,uc:r.uc_id,tipo:'conta_uc_recebedora',apurada:!!cp&&!lig.length&&!prov.length});
   });
   var disp=cs.docs_dispensados||[];
   itens.forEach(function(i){i.chave=(i.tipo==='conta_uc_recebedora'?'uc:'+i.uc:i.tipo);i.disp=!i.ok&&disp.indexOf(i.chave)>-1;});
@@ -903,13 +913,40 @@ function checklistCiclo(cs,cdocs,comps){
     h+='<tr><td>'+i.rot+'</td><td>'+(i.ok?'<span class="chip ok">Recebido</span>':i.disp?'<span class="chip">Dispensado</span>':'<span class="chip bad">Falta</span>')+'</td>';
     h+='<td style="word-break:break-all;color:var(--muted);font-size:12.5px">'+(i.apurada?'apurada sem arquivo vinculado':i.arq.map(esc).join('<br>'))+'</td>';
     var bt='';
-    if(!i.ok&&!i.disp)bt='<button class="btn mini" onclick="A.anexarConta(&quot;'+cs.id+'&quot;,&quot;'+i.uc+'&quot;,&quot;'+i.tipo+'&quot;)">Anexar</button> <button class="btn sec mini" title="Nao sera enviado neste ciclo" onclick="A.dispensarDoc(&quot;'+cs.id+'&quot;,&quot;'+i.chave+'&quot;,true)">Dispensar</button>';
+    if(i.med)bt='<a href="#geracao-int" class="btn '+(i.ok?'sec ':'')+'mini" onclick="event.preventDefault();var e=document.getElementById(&quot;geracao-int&quot;);if(e)e.scrollIntoView({behavior:&quot;smooth&quot;})">'+(i.ok?'Corrigir':'Informar')+'</a>';
+    else if(!i.ok&&!i.disp)bt='<button class="btn mini" onclick="A.anexarConta(&quot;'+cs.id+'&quot;,&quot;'+i.uc+'&quot;,&quot;'+i.tipo+'&quot;)">Anexar</button> <button class="btn sec mini" title="Nao sera enviado neste ciclo" onclick="A.dispensarDoc(&quot;'+cs.id+'&quot;,&quot;'+i.chave+'&quot;,true)">Dispensar</button>';
     else if(i.disp)bt='<button class="btn sec mini" onclick="A.dispensarDoc(&quot;'+cs.id+'&quot;,&quot;'+i.chave+'&quot;,false)">Desfazer</button>';
     h+='<td style="white-space:nowrap">'+bt+'</td></tr>';
   });
   h+='</table></div>';
   if(!ucsDoCiclo(cs).length)h+='<p class="note" style="margin-top:8px">Nenhuma UC recebedora com rateio vigente nesta geracao &mdash; confira a aba UCs &amp; Rateio.</p>';
+  if(meds.length)h+=painelGeracaoInterna(cs,meds);
   return h+'</div>';
+}
+function painelGeracaoInterna(cs,meds){
+  var ant=S.u.ciclos.filter(function(c){return String(c.mes_referencia)<String(cs.mes_referencia);}).sort(function(a,b){return String(b.mes_referencia).localeCompare(String(a.mes_referencia));});
+  var h='<div id="geracao-int" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">';
+  h+='<h2 style="margin:0 0 4px">Geracao das usinas (medidores internos)</h2>';
+  h+='<p class="note" style="margin:0 0 10px">Geracao de <b>'+mesLbl(cs.mes_geracao||cs.mes_referencia)+'</b>. Digite a leitura do medidor interno de cada usina: se houver leitura anterior registrada, a geracao e calculada sozinha (atual &minus; anterior). Sem leitura acumulada, informe direto o kWh gerado no mes.</p>';
+  h+='<div class="tblwrap"><table><tr><th>Usina</th><th>Leitura anterior</th><th>Data da leitura</th><th class="num">Leitura atual (kWh)</th><th class="num">Geracao no mes (kWh)</th></tr>';
+  var tot=0;
+  meds.forEach(function(m){
+    var g=(S.u.gmed||[]).filter(function(x){return x.ciclo_id===cs.id&&x.medidor===m.cod;})[0]||{};
+    var pa=null;
+    for(var k=0;k<ant.length&&!pa;k++){pa=(S.u.gmed||[]).filter(function(x){return x.ciclo_id===ant[k].id&&x.medidor===m.cod;})[0]||null;}
+    var antTxt=pa?(pa.leitura_kwh!=null?fmtN(pa.leitura_kwh)+' kWh':'&mdash;')+' <span style="color:var(--muted);font-size:12px">'+(pa.data_leitura?dt(pa.data_leitura):'')+(pa.geracao_kwh!=null?' &middot; gerou '+fmtN(pa.geracao_kwh):'')+'</span>':'&mdash;';
+    if(g.geracao_kwh!=null)tot+=Number(g.geracao_kwh);
+    var la=pa&&pa.leitura_kwh!=null?pa.leitura_kwh:'';
+    h+='<tr><td><b>'+esc(m.nome)+'</b></td><td>'+antTxt+'</td>';
+    h+='<td><input type="date" id="gm-dt-'+m.cod+'" value="'+(g.data_leitura?String(g.data_leitura).slice(0,10):'')+'" style="max-width:150px"></td>';
+    h+='<td class="num"><input type="number" step="1" min="0" id="gm-lt-'+m.cod+'" data-ant="'+la+'" value="'+(g.leitura_kwh!=null?g.leitura_kwh:'')+'" style="max-width:130px;text-align:right" oninput="A.gmCalc(&quot;'+m.cod+'&quot;)"></td>';
+    h+='<td class="num"><input type="number" step="1" min="0" id="gm-kw-'+m.cod+'" value="'+(g.geracao_kwh!=null?g.geracao_kwh:'')+'" style="max-width:130px;text-align:right"></td></tr>';
+  });
+  h+='</table></div>';
+  h+='<div style="display:flex;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap"><button class="btn" onclick="A.salvarGeracaoInterna(&quot;'+cs.id+'&quot;)">Salvar geracao</button>';
+  if(tot)h+='<span style="color:var(--muted)">Total registrado: <b>'+fmtN(tot)+' kWh</b></span>';
+  h+='</div></div>';
+  return h;
 }
 function renderUsinaTab(){
   var t=S.usinaTab,u=S.u.usina,h='';
@@ -1438,6 +1475,35 @@ window.A={
   vincularDoc:async function(docId,ucId){
     if(!ucId)return;
     try{var r=await sb.from('documentos').update({uc_id:ucId}).eq('id',docId);if(r.error)throw r.error;toast('Conta vinculada a UC.');loadUsina().catch(fail);}catch(e){fail(e);}
+  },
+  gmCalc:function(cod){
+    var lt=document.getElementById('gm-lt-'+cod), kw=document.getElementById('gm-kw-'+cod);
+    if(!lt||!kw)return;var a=lt.getAttribute('data-ant');
+    if(a!==''&&lt.value!==''){var d=Number(lt.value)-Number(a);if(d>=0)kw.value=Math.round(d);}
+  },
+  salvarGeracaoInterna:async function(cicloId){
+    try{
+      var cs=S.u.ciclos.filter(function(c){return c.id===cicloId;})[0], meds=S.u.usina.medidores_internos||[];
+      var rows=[], partes=[], tot=0, falta=[];
+      meds.forEach(function(m){
+        var dtv=document.getElementById('gm-dt-'+m.cod).value, lt=document.getElementById('gm-lt-'+m.cod).value, kw=document.getElementById('gm-kw-'+m.cod).value;
+        if(kw===''){falta.push(m.nome);return;}
+        if(Number(kw)<0)throw new Error('Geracao negativa em '+m.nome+' — confira a leitura.');
+        rows.push({usina_id:S.usinaId,ciclo_id:cicloId,medidor:m.cod,data_leitura:dtv||null,leitura_kwh:lt===''?null:Number(lt),geracao_kwh:Number(kw),informado_por:S.perfil.email});
+        partes.push(m.cod+' '+Number(kw).toLocaleString('pt-BR'));tot+=Number(kw);
+      });
+      if(!rows.length){toast('Informe a geracao de pelo menos uma usina.');return;}
+      var r=await sb.from('geracao_medidores').upsert(rows,{onConflict:'ciclo_id,medidor'});if(r.error)throw r.error;
+      if(!falta.length){
+        var mg=String(cs.mes_geracao||cs.mes_referencia).slice(0,10);
+        var g=await sb.from('geracao_mensal').upsert({usina_id:S.usinaId,mes_geracao:mg,kwh_bruto:tot,fonte:'Mesa - medidores internos',observacoes:partes.join(' + ')},{onConflict:'usina_id,mes_geracao'});
+        if(g.error)throw g.error;
+      }
+      var j=await sb.from('solicitacoes').select('id').eq('status','pendente').eq('ciclo_id',cicloId).eq('tipo','novo_documento');
+      if(!j.error&&!(j.data&&j.data.length))await sb.from('solicitacoes').insert({tipo:'novo_documento',usina_id:S.usinaId,ciclo_id:cicloId,solicitado_por:S.perfil.email,observacoes:JSON.stringify({origem:'geracao_interna',geracao:partes.join(' + ')})});
+      toast('Geracao salva ('+partes.join(' + ')+' kWh)'+(falta.length?' — falta: '+falta.join(', '):'')+'. Item na fila do Claude.');
+      loadUsina().catch(fail);
+    }catch(e){fail(e);}
   },
   anexarConta:function(cicloId,ucId,tipo){
     tipo=tipo||'conta_uc_recebedora';
