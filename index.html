@@ -587,7 +587,9 @@ async function loadDash(){
     var pend=(c?(pendCiclo[c.id]||0):0)+atrCic;
     if(pend>0)return 0;
     var pi=proxInfo(u);
-    if(pi&&pi.overdue)return 1;
+    // ciclo anterior fechado + data da proxima leitura chegou = fluxo normal do mes:
+    // o aviso fica na caixa de entrada e no quadro Atencao, o cartao nao vira alerta
+    if(pi&&pi.overdue&&!(c&&c.status==='concluido'))return 1;
     if(!c)return 5;
     if(c.status==='concluido')return 4;
     if(c.status==='faturado')return 3;
@@ -729,7 +731,8 @@ async function loadDash(){
       } else x+='<div style="font-size:13px;color:var(--muted)">'+(modoHist?'Sem ciclo neste mes':'Nenhum ciclo aberto')+'</div>';
       var pi=proxInfo(u);
       if(pi){
-        if(pi.overdue)x+='<div style="font-size:13px;color:var(--bad)"><b>Proximo ciclo: '+dts(pi.d)+'</b> &mdash; coletar a conta e iniciar!</div>';
+        if(pi.overdue&&c&&c.status==='concluido')x+='<div style="font-size:13px"><span style="color:var(--muted)">Proximo ciclo:</span> <b>'+dts(pi.d)+'</b> <span class="chip warn" style="font-size:10.5px;padding:1px 7px">conta na caixa de entrada</span></div>';
+        else if(pi.overdue)x+='<div style="font-size:13px;color:var(--bad)"><b>Proximo ciclo: '+dts(pi.d)+'</b> &mdash; coletar a conta e iniciar!</div>';
         else x+='<div style="font-size:13px"><span style="color:var(--muted)">Proximo ciclo:</span> <b>'+dts(pi.d)+'</b> <span style="color:var(--muted);font-size:11.5px">(leitura da geradora)</span></div>';
       }
     }
@@ -772,7 +775,7 @@ async function loadDash(){
     var c=latest[u.id];
     if(c&&pendCiclo[c.id])itens.push({key:'pend:'+c.id, cid:c.id, uid:u.id, txt:esc(u.nome)+' &middot; ciclo '+mesLbl(c.mes_referencia)+': '+pendCiclo[c.id]+' UC(s) com apuracao pendente/verificar', tipo:'warn'});
     var pi=proxInfo(u);
-    if(pi&&pi.overdue)itens.push({key:'leitura:'+u.id+':'+pi.d, uid:u.id, txt:esc(u.nome)+' &middot; leitura da geradora em '+dts(pi.d)+' &mdash; coletar a conta de energia e iniciar o novo ciclo', tipo:'bad'});
+    if(pi&&pi.overdue)itens.push({key:'leitura:'+u.id+':'+pi.d, uid:u.id, txt:esc(u.nome)+' &middot; leitura da geradora em '+dts(pi.d)+' &mdash; coletar a conta de energia e abrir o ciclo seguinte'+(c&&c.status==='concluido'?' (ciclo '+mesLbl(c.mes_referencia)+' ja fechado)':''), tipo:(c&&c.status==='concluido')?'warn':'bad'});
   });
   fila.filter(function(s){return s.tipo!=='atencao';}).forEach(function(s){
     itens.push({uid:s.usina_id, txt:'Fila do Claude: '+(({processar:'processar',faturar:'faturar',enviar:'enviar relatorios',novo_documento:'arquivo novo para atualizar',grupo_documento:'contas de grupo para ler',processar_grupo:'fechar o mes de um grupo',triagem:'triagem dos boletos no Banco Inter'}[s.tipo]||s.tipo))+(s.usinas?' &middot; '+esc(s.usinas.nome):'')+(s.ciclos?' &middot; ciclo '+mesLbl(s.ciclos.mes_referencia):'')+' (solicitado '+dt(s.criado_em)+')', tipo:'gold'});
