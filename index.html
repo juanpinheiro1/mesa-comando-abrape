@@ -774,7 +774,7 @@ async function loadDash(){
     if(pi&&pi.overdue)itens.push({key:'leitura:'+u.id+':'+pi.d, uid:u.id, txt:esc(u.nome)+' &middot; leitura da geradora em '+dts(pi.d)+' &mdash; coletar a conta de energia e iniciar o novo ciclo', tipo:'bad'});
   });
   fila.filter(function(s){return s.tipo!=='atencao';}).forEach(function(s){
-    itens.push({uid:s.usina_id, txt:'Fila do Claude: '+(({processar:'processar',faturar:'faturar',enviar:'enviar relatorios',novo_documento:'arquivo novo para atualizar',grupo_documento:'contas de grupo para ler',processar_grupo:'fechar o mes de um grupo'}[s.tipo]||s.tipo))+' &middot; '+esc(s.usinas?s.usinas.nome:'')+' &middot; ciclo '+(s.ciclos?mesLbl(s.ciclos.mes_referencia):'')+' (solicitado '+dt(s.criado_em)+')', tipo:'gold'});
+    itens.push({uid:s.usina_id, txt:'Fila do Claude: '+(({processar:'processar',faturar:'faturar',enviar:'enviar relatorios',novo_documento:'arquivo novo para atualizar',grupo_documento:'contas de grupo para ler',processar_grupo:'fechar o mes de um grupo',triagem:'triagem dos boletos no Banco Inter'}[s.tipo]||s.tipo))+' &middot; '+esc(s.usinas?s.usinas.nome:'')+' &middot; ciclo '+(s.ciclos?mesLbl(s.ciclos.mes_referencia):'')+' (solicitado '+dt(s.criado_em)+')', tipo:'gold'});
   });
   h+='<div class="panel" style="margin-top:22px'+(itens.length?';border-color:var(--warn)':'')+'"><div style="display:flex;align-items:center;gap:10px"><h2 style="margin:0">Atencao</h2><button class="btn sec mini" style="margin-left:auto" onclick="A.novoLembrete(null)">+ Lembrete</button></div><div style="height:10px"></div>';
   if(!itens.length)h+='<p class="empty">Nada exigindo acao no momento &mdash; tudo em dia.</p>';
@@ -1182,7 +1182,8 @@ function renderClientes(){
 async function loadCobranca(){
   var q=await Promise.all([
     sb.from('faturas_abrape').select('*, clientes(nome,grupo), ciclos(mes_referencia, usinas(nome))').order('criado_em',{ascending:false}).limit(2000),
-    sb.from('boletos').select('*, faturas_abrape(numero,ano,clientes(nome,grupo))').order('criado_em',{ascending:false}).limit(2000)
+    sb.from('boletos').select('*, faturas_abrape(numero,ano,clientes(nome,grupo))').order('criado_em',{ascending:false}).limit(2000),
+    sb.from('solicitacoes').select('id,status,criado_em,concluido_em,solicitado_por').eq('tipo','triagem').order('criado_em',{ascending:false}).limit(1)
   ]);
   for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
   S.cobFat=q[0].data;S.cobBol=q[1].data;
@@ -1191,7 +1192,12 @@ async function loadCobranca(){
   if(S.cobCliente===undefined)S.cobCliente='';
   var nomes={};
   S.cobFat.forEach(function(f){if(f.clientes&&f.clientes.nome)nomes[f.clientes.nome]=1;if(f.clientes&&f.clientes.grupo)nomes[f.clientes.grupo]=1;});
-  var h='<div class="pagehead"><h1>Financeiro</h1><span class="sub">Faturas ABRAPE, boletos Banco Inter e recebimentos</span></div>';
+  var tri=(q[2]&&q[2].data||[])[0];
+  var h='<div class="pagehead"><h1>Financeiro</h1><span class="sub">Faturas ABRAPE, boletos Banco Inter e recebimentos</span>';
+  h+='<div class="mesnav">';
+  if(tri&&tri.status==='pendente')h+='<span class="chip warn" title="Pedida por '+esc(tri.solicitado_por||'')+'">Triagem pedida em '+dt(tri.criado_em)+' &middot; aguardando fila</span>';
+  else h+=(tri&&tri.concluido_em?'<span style="font-size:12px;color:var(--muted)">Ultima triagem: '+dt(tri.concluido_em)+'</span> ':'')+'<button class="btn mini" onclick="A.pedirTriagem()">Pedir triagem</button>';
+  h+='</div></div>';
   h+='<div id="cobKpis"></div>';
   h+='<div class="panel"><div id="cobAbas"></div>';
   h+='<div class="cobbar"><div id="cobStatus"></div>';
@@ -1593,6 +1599,11 @@ window.A={
       var g=await sb.from('grupo_ucs').select('uc_id').eq('id',grupoUcId).single();
       if(!g.error&&g.data&&g.data.uc_id)await sb.from('ucs').update(upd).eq('id',g.data.uc_id);
     }catch(e){}
+  },
+  pedirTriagem:async function(){
+    if(!window.confirm('Pedir ao Claude a triagem dos boletos no Banco Inter? Ele confere pagamentos, atrasos e vencimentos e atualiza faturas e boletos aqui na Mesa.'))return;
+    try{var r=await sb.from('solicitacoes').insert({tipo:'triagem',solicitado_por:S.perfil.email,observacoes:JSON.stringify({origem:'financeiro'})});
+      if(r.error)throw r.error;toast('Triagem pedida. Diga "roda a fila" ao Claude.');loadCobranca().catch(fail);}catch(e){fail(e);}
   },
   caixaEntrada:function(){go('entrada');},
   irGrupo:function(id){S.grpId=id;S.grpCiclo=null;go('grp');},
