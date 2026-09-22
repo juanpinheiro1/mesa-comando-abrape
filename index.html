@@ -774,7 +774,7 @@ async function loadDash(){
     if(pi&&pi.overdue)itens.push({key:'leitura:'+u.id+':'+pi.d, uid:u.id, txt:esc(u.nome)+' &middot; leitura da geradora em '+dts(pi.d)+' &mdash; coletar a conta de energia e iniciar o novo ciclo', tipo:'bad'});
   });
   fila.filter(function(s){return s.tipo!=='atencao';}).forEach(function(s){
-    itens.push({uid:s.usina_id, txt:'Fila do Claude: '+(({processar:'processar',faturar:'faturar',enviar:'enviar relatorios',novo_documento:'arquivo novo para atualizar',grupo_documento:'contas de grupo para ler',processar_grupo:'fechar o mes de um grupo',triagem:'triagem dos boletos no Banco Inter'}[s.tipo]||s.tipo))+' &middot; '+esc(s.usinas?s.usinas.nome:'')+' &middot; ciclo '+(s.ciclos?mesLbl(s.ciclos.mes_referencia):'')+' (solicitado '+dt(s.criado_em)+')', tipo:'gold'});
+    itens.push({uid:s.usina_id, txt:'Fila do Claude: '+(({processar:'processar',faturar:'faturar',enviar:'enviar relatorios',novo_documento:'arquivo novo para atualizar',grupo_documento:'contas de grupo para ler',processar_grupo:'fechar o mes de um grupo',triagem:'triagem dos boletos no Banco Inter'}[s.tipo]||s.tipo))+(s.usinas?' &middot; '+esc(s.usinas.nome):'')+(s.ciclos?' &middot; ciclo '+mesLbl(s.ciclos.mes_referencia):'')+' (solicitado '+dt(s.criado_em)+')', tipo:'gold'});
   });
   h+='<div class="panel" style="margin-top:22px'+(itens.length?';border-color:var(--warn)':'')+'"><div style="display:flex;align-items:center;gap:10px"><h2 style="margin:0">Atencao</h2><button class="btn sec mini" style="margin-left:auto" onclick="A.novoLembrete(null)">+ Lembrete</button></div><div style="height:10px"></div>';
   if(!itens.length)h+='<p class="empty">Nada exigindo acao no momento &mdash; tudo em dia.</p>';
