@@ -306,7 +306,7 @@ async function loadGrupos(){
     sb.from('grupo_usinas').select('*').order('nome'),
     sb.from('grupo_leituras').select('*'),
     sb.from('grupo_geracao').select('*'),
-    sb.from('solicitacoes').select('id,tipo,status,grupo_ciclo_id,criado_em').eq('status','pendente').not('grupo_ciclo_id','is',null),
+    sb.from('solicitacoes').select('id,tipo,status,grupo_ciclo_id,criado_em,observacoes').eq('status','pendente').not('grupo_ciclo_id','is',null),
     sb.from('grupo_documentos').select('id,ciclo_id,grupo_uc_id,tipo,nome_arquivo,storage_path,validacao,criado_em,enviado_por').order('criado_em',{ascending:false})
   ]);
   for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
@@ -425,16 +425,43 @@ function renderGrupos(){
   h+='</table></div></div>';
   // usinas
   var gm={};ger.forEach(function(x){gm[x.grupo_usina_id]=x;});
+  // consulta de geracao nos portais (RENAC SEC / AUXSOL): o que ja esta na fila deste ciclo
+  var emConsulta={};(G.fila||[]).filter(function(x){return x.grupo_ciclo_id===c.id&&x.tipo==='geracao_grupo';}).forEach(function(x){
+    try{(JSON.parse(x.observacoes||'{}').usinas||[]).forEach(function(z){emConsulta[z.grupo_usina_id]=1;});}catch(e){}
+  });
+  // periodo da conta de cada UC neste ciclo (leitura anterior -> atual)
+  var periodoUC=function(ucId){var l=lm[ucId];if(!l)return null;if(l.leitura_atual)return {ini:l.leitura_anterior,fim:l.leitura_atual,dias:l.dias};var u=ucMap[ucId];if(u&&u.ultima_leitura&&l.dias){var d=new Date(String(u.ultima_leitura).slice(0,10)+'T12:00:00');d.setDate(d.getDate()-l.dias);return {ini:d.toISOString().slice(0,10),fim:String(u.ultima_leitura).slice(0,10),dias:l.dias};}return null;};
+  var elegivel=function(u){return u.propriedade==='propria'&&u.status==='OPERANDO'&&u.portais&&u.portais.length&&u.grupo_uc_id&&periodoUC(u.grupo_uc_id);};
+  S.grpElegiveis=usinas.filter(elegivel).map(function(u){var pz=periodoUC(u.grupo_uc_id);return {grupo_usina_id:u.id,nome:u.nome,grupo_uc_id:u.grupo_uc_id,apelido:(ucMap[u.grupo_uc_id]||{}).apelido,portais:u.portais,periodo_inicio:pz.ini,periodo_fim:pz.fim,dias:pz.dias};});
   var linhasU=function(prop,titulo){
     var arr=usinas.filter(function(u){return u.propriedade===prop;});
     if(!arr.length)return '';
-    var x='<div class="panel"><h2>'+titulo+' ('+arr.length+')</h2><div class="tblwrap"><table><tr><th>Usina</th><th>Status</th><th class="num">kWp</th><th class="num">Geracao no mes</th><th class="num">kWh/kWp</th><th>Observacao</th></tr>';
+    var propria=prop==='propria';
+    var semGer=S.grpElegiveis.filter(function(e){var gx=gm[e.grupo_usina_id];return !(gx&&gx.periodo_fim===e.periodo_fim)&&!emConsulta[e.grupo_usina_id];});
+    var x='<div class="panel"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h2 style="margin:0">'+titulo+' ('+arr.length+')</h2>';
+    if(propria)x+='<button class="btn sec mini" style="margin-left:auto" '+(semGer.length?'':'disabled')+' onclick="A.grpConsultarGeracao(null)">Consultar geracao de todas ('+semGer.length+')</button>';
+    x+='</div><div style="height:10px"></div>';
+    x+='<div class="tblwrap"><table><tr><th>Usina</th><th>Status</th><th class="num">kWp</th><th class="num">'+(propria?'Geracao no periodo da conta':'Geracao no mes')+'</th><th class="num">kWh/kWp</th><th>Observacao</th>'+(propria?'<th>Portais</th>':'')+'</tr>';
     arr.sort(function(a,b){return String(a.nome).localeCompare(String(b.nome));}).forEach(function(u){
       var gx=gm[u.id], kw=n(u.potencia_kwp), yield_=gx&&kw?Math.round(n(gx.kwh)/kw):null;
       var alerta=(u.status==='OPERANDO'&&!gx);
+      var pz=u.grupo_uc_id?periodoUC(u.grupo_uc_id):null;
       x+='<tr><td><b>'+esc(u.nome)+'</b>'+(u.usina_id?' <span class="chip gold">usina ABRAPE</span>':'')+'</td><td>'+esc(u.status||'')+'</td>';
-      x+='<td class="num">'+(kw?kw.toLocaleString('pt-BR'):'&mdash;')+'</td><td class="num">'+(gx?kwh(gx.kwh):'<span class="chip bad">sem leitura</span>')+'</td>';
-      x+='<td class="num">'+(yield_?yield_:'&mdash;')+'</td><td style="font-size:12px;color:var(--muted)">'+esc(u.observacoes||'')+(alerta?' <span class="chip bad">verificar monitoramento</span>':'')+'</td></tr>';
+      var gerTxt=gx?kwh(gx.kwh)+(gx.periodo_inicio?'<br><span style="font-size:11px;color:var(--muted)">'+dt(gx.periodo_inicio)+' a '+dt(gx.periodo_fim)+'</span>':''):(u.status==='OPERANDO'?'<span class="chip bad">sem leitura</span>':'&mdash;');
+      x+='<td class="num">'+(kw?kw.toLocaleString('pt-BR'):'&mdash;')+'</td><td class="num">'+gerTxt+'</td>';
+      x+='<td class="num">'+(yield_?yield_:'&mdash;')+'</td><td style="font-size:12px;color:var(--muted)">'+esc(u.observacoes||'')+(alerta?' <span class="chip bad">verificar monitoramento</span>':'')+'</td>';
+      if(propria){
+        var pt=(u.portais||[]).map(function(z){return '<span class="chip'+(z.portal==='AUXSOL'?' gold':' info')+'" style="font-size:10.5px">'+esc(z.portal)+' &middot; '+esc(z.site)+'</span>';}).join(' ');
+        var bt='';
+        if(u.status!=='OPERANDO')bt='';
+        else if(!u.portais||!u.portais.length)bt='<span class="chip bad" title="Cadastrar o nome desta usina no portal (RENAC SEC / AUXSOL)">sem portal</span>';
+        else if(emConsulta[u.id])bt='<span class="chip warn">consulta na fila</span>';
+        else if(!pz)bt='<span class="chip" title="A geracao e consultada no mesmo intervalo da conta: envie a conta desta loja primeiro">aguarda a conta</span>';
+        else if(gx&&gx.periodo_fim===pz.fim)bt='<button class="btn sec mini" title="Consultar de novo nos portais" onclick="A.grpConsultarGeracao(&quot;'+u.id+'&quot;)">Atualizar</button>';
+        else bt='<button class="btn mini" title="Consultar a geracao nos portais entre '+dt(pz.ini)+' e '+dt(pz.fim)+'" onclick="A.grpConsultarGeracao(&quot;'+u.id+'&quot;)">Consultar '+(pz?'('+dt(pz.ini).slice(0,5)+' a '+dt(pz.fim).slice(0,5)+')':'')+'</button>';
+        x+='<td style="font-size:12px;white-space:nowrap">'+pt+(pt&&bt?'<br>':'')+bt+'</td>';
+      }
+      x+='</tr>';
     });
     return x+'</table></div></div>';
   };
@@ -820,7 +847,7 @@ async function loadDash(){
     if(pi&&pi.overdue)itens.push({key:'leitura:'+u.id+':'+pi.d, uid:u.id, txt:esc(u.nome)+' &middot; leitura da geradora em '+dts(pi.d)+' &mdash; coletar a conta de energia e abrir o ciclo seguinte'+(c&&c.status==='concluido'?' (ciclo '+mesLbl(c.mes_referencia)+' ja fechado)':''), tipo:(c&&c.status==='concluido')?'warn':'bad'});
   });
   fila.filter(function(s){return s.tipo!=='atencao';}).forEach(function(s){
-    itens.push({uid:s.usina_id, txt:'Fila do Claude: '+(({processar:'processar',faturar:'faturar',enviar:'enviar relatorios',novo_documento:'arquivo novo para atualizar',grupo_documento:'contas de grupo para ler',processar_grupo:'fechar o mes de um grupo',triagem:'triagem dos boletos no Banco Inter'}[s.tipo]||s.tipo))+(s.usinas?' &middot; '+esc(s.usinas.nome):'')+(s.ciclos?' &middot; ciclo '+mesLbl(s.ciclos.mes_referencia):'')+' (solicitado '+dt(s.criado_em)+')', tipo:'gold'});
+    itens.push({uid:s.usina_id, txt:'Fila do Claude: '+(({processar:'processar',faturar:'faturar',enviar:'enviar relatorios',novo_documento:'arquivo novo para atualizar',grupo_documento:'contas de grupo para ler',processar_grupo:'fechar o mes de um grupo',geracao_grupo:'consultar geracao nos portais (RENAC/AUXSOL)',triagem:'triagem dos boletos no Banco Inter'}[s.tipo]||s.tipo))+(s.usinas?' &middot; '+esc(s.usinas.nome):'')+(s.ciclos?' &middot; ciclo '+mesLbl(s.ciclos.mes_referencia):'')+' (solicitado '+dt(s.criado_em)+')', tipo:'gold'});
   });
   h+='<div class="panel" style="margin-top:22px'+(itens.length?';border-color:var(--warn)':'')+'"><div style="display:flex;align-items:center;gap:10px"><h2 style="margin:0">Atencao</h2><button class="btn sec mini" style="margin-left:auto" onclick="A.novoLembrete(null)">+ Lembrete</button></div><div style="height:10px"></div>';
   if(!itens.length)h+='<p class="empty">Nada exigindo acao no momento &mdash; tudo em dia.</p>';
@@ -1634,6 +1661,25 @@ window.A={
       loadGrupos().catch(fail);
     };
     inp.click();
+  },
+  grpConsultarGeracao:async function(grupoUsinaId){
+    try{
+      var c=(S.grp.ciclos||[]).filter(function(x){return x.id===S.grpCiclo;})[0];if(!c)return;
+      var lista=(S.grpElegiveis||[]).filter(function(e){return !grupoUsinaId||e.grupo_usina_id===grupoUsinaId;});
+      if(!lista.length){toast('Nenhuma usina elegivel: e preciso ter a conta da loja lida neste ciclo e o nome da usina nos portais.');return;}
+      var ja=(S.grp.fila||[]).filter(function(x){return x.grupo_ciclo_id===c.id&&x.tipo==='geracao_grupo';})[0];
+      var obs={grupo:S.grpId,ciclo:c.id,mes:c.mes_referencia,usinas:[]};
+      if(ja){try{obs=JSON.parse(ja.observacoes||'{}');obs.usinas=obs.usinas||[];}catch(e){}}
+      var novos=0;
+      lista.forEach(function(e){if(!obs.usinas.some(function(z){return z.grupo_usina_id===e.grupo_usina_id;})){obs.usinas.push(e);novos++;}});
+      if(!novos){toast('Essas usinas ja estao na fila de consulta.');return;}
+      if(!window.confirm('Pedir ao Claude a consulta da geracao de '+novos+' usina(s) nos portais RENAC SEC / AUXSOL, no intervalo da conta de cada loja?\n\nObs.: os portais pedem login - quem rodar a fila precisa estar logado na conta VERTYSNORDESTE.'))return;
+      var r=ja?await sb.from('solicitacoes').update({observacoes:JSON.stringify(obs)}).eq('id',ja.id)
+              :await sb.from('solicitacoes').insert({tipo:'geracao_grupo',grupo_ciclo_id:c.id,solicitado_por:S.perfil.email,observacoes:JSON.stringify(obs)});
+      if(r.error)throw r.error;
+      toast(novos+' consulta(s) de geracao na fila do Claude. Diga "roda a fila".');
+      loadGrupos().catch(fail);
+    }catch(e){fail(e);}
   },
   grpUploadUC:function(ucId){
     var c=(S.grp.ciclos||[]).filter(function(x){return x.id===S.grpCiclo;})[0];if(!c)return;
