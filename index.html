@@ -331,6 +331,16 @@ function renderGrupos(){
   var n=function(v){return v===null||v===undefined?0:Number(v);};
   var kwh=function(v){return (v===null||v===undefined)?'&mdash;':Math.round(Number(v)).toLocaleString('pt-BR')+' kWh';};
   var k=c&&c.kpis?c.kpis:{};
+  // situacao de cada UC no ciclo: lida (leitura gravada) / recebida (conta anexada, aguardando processamento) / pendente
+  var lm={};lei.forEach(function(l){lm[l.grupo_uc_id]=l;});
+  var contasCiclo=c?(G.docs||[]).filter(function(d){return d.ciclo_id===c.id&&d.tipo!=='dashboard';}):[];
+  var docUC={};contasCiclo.forEach(function(d){if(d.grupo_uc_id)(docUC[d.grupo_uc_id]=docUC[d.grupo_uc_id]||[]).push(d);});
+  var ucsAtivas=ucs.filter(function(u){return u.ativo!==false;});
+  var hojeG=hojeLocal();
+  var pend=ucsAtivas.filter(function(u){return !lm[u.id]&&!docUC[u.id];}).sort(function(a,b){
+    var pa=a.proxima_leitura?String(a.proxima_leitura).slice(0,10):'9999', pb=b.proxima_leitura?String(b.proxima_leitura).slice(0,10):'9999';
+    return pa.localeCompare(pb)||String(a.apelido||'').localeCompare(String(b.apelido||''));});
+  var receb=ucsAtivas.filter(function(u){return !lm[u.id]&&docUC[u.id];});
   var consumo=lei.reduce(function(a,l){return a+n(l.consumo_kwh);},0);
   var faturas=lei.reduce(function(a,l){return a+n(l.valor_total);},0);
   var creditos=lei.reduce(function(a,l){return a+n(l.injetada_gdi_kwh)+n(l.injetada_gdii_kwh);},0);
@@ -345,7 +355,8 @@ function renderGrupos(){
   if(!c){el('main').innerHTML=h+'<p class="empty">Nenhum ciclo neste grupo ainda. Use &quot;+ Novo mes&quot; para abrir o primeiro.</p>';return;}
   var naFila=(G.fila||[]).filter(function(x){return x.grupo_ciclo_id===c.id;}).length;
   h+='<div class="kpis">';
-  h+='<div class="kpi"><div class="l">UCs no ciclo</div><div class="v">'+lei.length+' / '+ucs.length+'</div><div class="d">contas lidas neste mes</div></div>';
+  h+='<div class="kpi"><div class="l">UCs no ciclo</div><div class="v">'+lei.length+' / '+ucsAtivas.length+'</div><div class="d">contas lidas neste mes'+(receb.length?' &middot; '+receb.length+' recebida'+(receb.length>1?'s':'')+' a processar':'')+'</div></div>';
+  h+='<div class="kpi'+(pend.length?' kpi-alerta':'')+'" style="cursor:pointer" onclick="var e=document.getElementById(&quot;grp-entrada&quot;);if(e)e.scrollIntoView({behavior:&quot;smooth&quot;})" title="Ir para as contas pendentes"><div class="l">Contas pendentes</div><div class="v">'+pend.length+'</div><div class="d">'+(pend.length?'UCs sem conta neste ciclo &mdash; clique para enviar':'todas as contas do ciclo recebidas')+'</div></div>';
   h+='<div class="kpi"><div class="l">Consumo Energisa</div><div class="v">'+Math.round(consumo).toLocaleString('pt-BR')+'</div><div class="d">kWh faturados pela rede</div></div>';
   h+='<div class="kpi"><div class="l">Geracao propria</div><div class="v">'+Math.round(gerProp).toLocaleString('pt-BR')+'</div><div class="d">kWh medidos nos inversores</div></div>';
   h+='<div class="kpi"><div class="l">Usinas locadas</div><div class="v">'+Math.round(gerLoc).toLocaleString('pt-BR')+'</div><div class="d">kWh injetados (ABRAPE)</div></div>';
@@ -364,6 +375,27 @@ function renderGrupos(){
     h+='<p class="note" style="margin-top:10px">O ciclo de <b>'+mesLbl(mesAtual)+'</b> ainda nao foi aberto. Use <b>Abrir novo ciclo</b> (ou envie as contas pela Caixa de entrada, que abre o ciclo sozinha).</p>';
   if(c.observacoes)h+='<p class="note" style="margin-top:10px">'+esc(c.observacoes)+'</p>';
   h+='</div>';
+  // caixa de entrada do ciclo: UCs que ainda nao mandaram a conta
+  h+='<div class="panel" id="grp-entrada" style="margin-bottom:16px;border-color:'+(pend.length?'var(--warn, #c98a1b)':'var(--ok, #2e7d4f)')+'">';
+  h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h2 style="margin:0">Caixa de entrada do ciclo</h2>';
+  h+=pend.length?'<span class="chip warn">Faltam '+pend.length+' de '+ucsAtivas.length+'</span>':'<span class="chip ok">Todas recebidas</span>';
+  if(pend.length)h+='<button class="btn sec mini" style="margin-left:auto" onclick="A.grpUpload()">Enviar varias de uma vez</button>';
+  h+='</div>';
+  if(!pend.length)h+='<p class="note" style="margin-top:8px">Nenhuma conta pendente em '+mesLbl(c.mes_referencia)+'.'+(receb.length?' '+receb.length+' conta(s) recebida(s) aguardam o processamento do Claude.':'')+'</p>';
+  else{
+    h+='<p class="note" style="margin:8px 0 10px">Clique em <b>Enviar conta</b> na loja: o arquivo e conferido (UC, matricula e data de leitura), entra neste ciclo e cria o item na fila do Claude. A data da proxima leitura e atualizada sozinha.</p>';
+    h+='<div class="tblwrap"><table><tr><th>Loja</th><th>Matricula</th><th>UC</th><th>Leitura prevista</th><th></th></tr>';
+    pend.forEach(function(u){
+      var px=u.proxima_leitura?String(u.proxima_leitura).slice(0,10):null, venc=px&&px<=hojeG;
+      var dias=px?Math.round((new Date(hojeG)-new Date(px))/86400000):null;
+      h+='<tr'+(venc?' style="background:color-mix(in srgb, var(--warn, #c98a1b) 12%, transparent)"':'')+'><td><b>'+esc(u.apelido||'')+'</b>'+(u.uc_id?' <span class="chip info">ABRAPE</span>':'')+'</td>';
+      h+='<td class="mono">'+esc(u.matricula||'')+'</td><td class="mono" style="font-size:12px">'+esc(u.numero_uc||'')+'</td>';
+      h+='<td>'+(px?dt(px)+(venc?' <span class="chip '+(dias>=7?'bad':'warn')+'">'+(dias===0?'hoje':'ha '+dias+' dia'+(dias>1?'s':''))+'</span>':' <span class="chip">em '+(-dias)+' dia'+(-dias>1?'s':'')+'</span>'):'<span style="color:var(--muted)">sem data</span>')+'</td>';
+      h+='<td style="white-space:nowrap"><button class="btn mini" onclick="A.grpUploadUC(&quot;'+u.id+'&quot;)">Enviar conta</button></td></tr>';
+    });
+    h+='</table></div>';
+  }
+  h+='</div>';
   // dashboards e documentos do ciclo
   var docs=(G.docs||[]).filter(function(d){return d.ciclo_id===c.id;});
   var dash=docs.filter(function(d){return d.tipo==='dashboard';});
@@ -379,16 +411,16 @@ function renderGrupos(){
   if(contas.length)h+='<p class="note" style="margin-top:10px">'+contas.length+' conta(s) de energia anexada(s) neste ciclo.</p>';
   h+='</div>';
   // tabela por UC
-  h+='<div class="panel"><h2>UCs do grupo ('+lei.length+' com conta neste mes)</h2><div class="tblwrap"><table><tr><th>Loja</th><th>Matricula</th><th>Classe</th><th class="num">Consumo</th><th class="num">Creditos</th><th class="num">Nao compensado</th><th class="num">Saldo</th><th class="num">Fatura</th><th>Obs</th></tr>';
-  var lm={};lei.forEach(function(l){lm[l.grupo_uc_id]=l;});
+  h+='<div class="panel"><h2>UCs do grupo ('+lei.length+' com conta neste mes)</h2><div class="tblwrap"><table><tr><th>Loja</th><th>Matricula</th><th>Classe</th><th class="num">Consumo</th><th class="num">Creditos</th><th class="num">Nao compensado</th><th class="num">Saldo</th><th class="num">Fatura</th><th>Obs</th><th>Conta</th></tr>';
   ucs.slice().sort(function(a,b){return String(a.apelido||'').localeCompare(String(b.apelido||''));}).forEach(function(u){
-    var l=lm[u.id];
+    var l=lm[u.id], temDoc=!!docUC[u.id], ehPend=!l&&!temDoc&&u.ativo!==false;
     var cred=l?n(l.injetada_gdi_kwh)+n(l.injetada_gdii_kwh):null;
-    h+='<tr'+(l?'':' style="opacity:.5"')+'><td><b>'+esc(u.apelido||'')+'</b>'+(u.uc_id?' <span class="chip info" title="Tambem e recebedora de uma usina ABRAPE">ABRAPE</span>':'')+'</td>';
+    var colConta=l?'<span class="chip ok">lida</span>':temDoc?'<span class="chip info" title="'+esc(docUC[u.id][0].nome_arquivo)+'">recebida</span>':u.ativo===false?'<span class="chip">inativa</span>':'<button class="btn mini" onclick="A.grpUploadUC(&quot;'+u.id+'&quot;)">Enviar conta</button>';
+    h+='<tr'+(ehPend?' style="background:color-mix(in srgb, var(--warn, #c98a1b) 10%, transparent)"':(l?'':' style="opacity:.7"'))+'><td><b>'+esc(u.apelido||'')+'</b>'+(u.uc_id?' <span class="chip info" title="Tambem e recebedora de uma usina ABRAPE">ABRAPE</span>':'')+'</td>';
     h+='<td class="mono">'+esc(u.matricula||'')+'</td><td style="font-size:12px">'+esc((u.classificacao||'').replace('COMERCIAL ','').replace('TRIFASICO','TRI'))+'</td>';
     h+='<td class="num">'+(l?kwh(l.consumo_kwh):'sem conta')+'</td><td class="num">'+(l?kwh(cred):'&mdash;')+'</td><td class="num">'+(l?kwh(l.nao_compensado_kwh):'&mdash;')+'</td>';
     h+='<td class="num">'+(l&&l.saldo_kwh?kwh(l.saldo_kwh):'&mdash;')+'</td><td class="num">'+(l?money(l.valor_total):'&mdash;')+'</td>';
-    h+='<td style="font-size:12px;color:var(--muted)">'+esc(l?(l.observacoes||''):'')+'</td></tr>';
+    h+='<td style="font-size:12px;color:var(--muted)">'+esc(l?(l.observacoes||''):'')+'</td><td style="white-space:nowrap">'+colConta+'</td></tr>';
   });
   h+='</table></div></div>';
   // usinas
@@ -1600,6 +1632,36 @@ window.A={
       }catch(e){}
       toast(okN+' arquivo(s) enviados'+(erros.length?' &middot; '+erros.length+' falharam':'')+'. Item na fila do Claude.');
       loadGrupos().catch(fail);
+    };
+    inp.click();
+  },
+  grpUploadUC:function(ucId){
+    var c=(S.grp.ciclos||[]).filter(function(x){return x.id===S.grpCiclo;})[0];if(!c)return;
+    var u=(S.grp.ucs||[]).filter(function(x){return x.id===ucId;})[0];if(!u)return;
+    var inp=document.createElement('input');inp.type='file';inp.accept='application/pdf,.pdf';
+    inp.onchange=async function(){
+      try{
+        var f=inp.files[0];if(!f)return;
+        var obsConf=null, lido=null;
+        try{
+          toast('Conferindo a conta de '+esc(u.apelido||'')+'\u2026');
+          var res=conferirConta(await textoDoPdf(f),{numero_uc:u.numero_uc||'',matricula:u.matricula||'',prox:u.proxima_leitura||null},'conta');
+          lido=res.dados;
+          if(res.avisos.length){
+            if(!await modalConferencia(res,f.name)){toast('Envio cancelado.');return;}
+            obsConf='ENVIADO COM DIVERGENCIA ('+new Date().toLocaleString('pt-BR')+'): '+res.avisos.map(function(a){return a.replace(/<[^>]+>/g,'');}).join(' | ');
+          }
+        }catch(errc){obsConf='Nao foi possivel conferir o arquivo automaticamente: '+(errc.message||errc);}
+        var nome=f.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9._-]/g,'_');
+        var path='grupos/'+S.grpId+'/'+String(c.mes_referencia).slice(0,7)+'/'+Date.now()+'_'+nome;
+        var up=await sb.storage.from('documentos').upload(path,f);if(up.error)throw up.error;
+        var r=await sb.from('grupo_documentos').insert({ciclo_id:c.id,grupo_uc_id:u.id,nome_arquivo:f.name,storage_path:path,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email,validacao:obsConf,ref_leitura:u.proxima_leitura||null});
+        if(r.error)throw r.error;
+        await A.grpFilaDoc(c.id);
+        if(lido&&lido.prox&&!obsConf)await A.grpAtualizaLeitura(u.id,lido);
+        toast('Conta de '+esc(u.apelido||'')+' enviada para '+mesLbl(c.mes_referencia)+(obsConf?' com divergencia':'')+'. Item na fila do Claude.');
+        loadGrupos().catch(fail);
+      }catch(err){fail(err);}
     };
     inp.click();
   },
