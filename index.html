@@ -418,7 +418,7 @@ async function dadosEntrada(){
     sb.from('rateios').select('usina_id,uc_id,vigencia_fim').is('vigencia_fim',null),
     sb.from('ucs').select('id,numero_uc,apelido,matricula,tipo,proxima_leitura,proxima_leitura_estimada,ultima_leitura, clientes(nome)'),
     sb.from('documentos').select('uc_id,tipo,ref_leitura,criado_em,ciclo_id, ciclos(mes_referencia,usina_id)').in('tipo',['conta_uc_recebedora','conta_geradora']).not('uc_id','is',null),
-    sb.from('ciclos').select('id,usina_id,mes_referencia,mes_geracao,status'),
+    sb.from('ciclos').select('id,usina_id,mes_referencia,mes_geracao,mes_faturamento,status'),
     sb.from('grupos').select('id,nome').eq('ativo',true),
     sb.from('grupo_ucs').select('id,grupo_id,apelido,matricula,numero_uc,uc_id,proxima_leitura,ultima_leitura,proxima_leitura_estimada,ativo'),
     sb.from('grupo_ciclos').select('id,grupo_id,mes_referencia,status'),
@@ -444,7 +444,20 @@ async function dadosEntrada(){
       var ult=docs.filter(function(d){return d.uc_id===k&&d.ciclos&&d.ciclos.usina_id===us1.id;}).map(function(d){return String(d.ciclos.mes_referencia).slice(0,10);}).sort().pop();
       var mes;
       if(ult){var dd=new Date(ult+'T12:00:00');dd.setMonth(dd.getMonth()+1);mes=dd.toISOString().slice(0,7)+'-01';}
-      else if(e.prox){var dp=new Date(String(e.prox).slice(0,10)+'T12:00:00');if(e.papel==='geradora'&&dp.getDate()>=15)dp.setMonth(dp.getMonth()+1);mes=dp.toISOString().slice(0,7)+'-01';}
+      else if(e.prox){
+        // o ciclo leva o nome da competencia da conta da geradora (= mes da leitura dela).
+        // para uma recebedora sem historico, desconta a defasagem da usina (contas da recebedora x nome do ciclo)
+        var dp=new Date(String(e.prox).slice(0,10)+'T12:00:00');
+        if(e.papel!=='geradora'){
+          var cl=q[4].data.filter(function(c){return c.usina_id===us1.id&&c.mes_faturamento;}).sort(function(a,b){return String(b.mes_referencia).localeCompare(String(a.mes_referencia));})[0];
+          if(cl){
+            var mr=new Date(String(cl.mes_referencia).slice(0,10)+'T12:00:00'), mf=new Date(String(cl.mes_faturamento).slice(0,10)+'T12:00:00');
+            var lag=(mf.getFullYear()-mr.getFullYear())*12+(mf.getMonth()-mr.getMonth());
+            if(lag)dp.setMonth(dp.getMonth()-lag);
+          }
+        }
+        mes=dp.toISOString().slice(0,7)+'-01';
+      }
       if(!mes){
         var cs=q[4].data.filter(function(c){return c.usina_id===us1.id;}).sort(function(a,b){return String(b.mes_referencia).localeCompare(String(a.mes_referencia));});
         var aberto=cs.filter(function(c){return c.status!=='concluido';})[0];
@@ -977,7 +990,7 @@ function renderUsinaTab(){
         };
         h+='<div class="panel" style="border-color:var(--gold)"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">';
         h+='<h2 style="margin:0">Ciclo '+mesLbl(cs.mes_referencia)+'</h2>'+chip(STCICLO,cs.status);
-        h+='<span style="color:var(--muted);font-size:12.5px">Geracao de '+mesLbl(cs.mes_geracao)+'</span>';
+        h+='<span style="color:var(--muted);font-size:12.5px">Competencia da geradora'+(cs.mes_faturamento&&String(cs.mes_faturamento).slice(0,7)!==String(cs.mes_referencia).slice(0,7)?' &middot; contas das recebedoras de '+mesLbl(cs.mes_faturamento):'')+'</span>';
         h+='<button class="btn sec mini" style="margin-left:auto" onclick="A.verCiclo(null)">Fechar detalhe</button></div>';
         var sols=(S.u.sol||[]).filter(function(s){return s.ciclo_id===cs.id;});
         var TIPOSOL={processar:'Processar o ciclo',faturar:'Aprovar e faturar',enviar:'Enviar relatorios',novo_documento:'Arquivo novo &mdash; atualizar',atencao:'Resposta a alerta'};
@@ -1033,15 +1046,15 @@ function renderUsinaTab(){
       }
     }
     h+='<div class="panel"><h2>Abrir novo ciclo</h2><div class="actbar">';
-    h+='<div class="fld"><label>Mes de referencia (fatura)</label><input type="month" id="nc-mes"></div>';
+    h+='<div class="fld"><label>Mes do ciclo (competencia da conta da geradora)</label><input type="month" id="nc-mes"></div>';
     h+='<button class="btn" onclick="A.abrirCiclo()">Abrir ciclo</button></div>';
-    h+='<p class="note">O mes de geracao correspondente e registrado automaticamente como o mes anterior (regra padrao; ajuste depois se a usina tiver outra defasagem).</p></div>';
+    h+='<p class="note">O ciclo leva o nome do mes de competencia impresso na conta da UC geradora &mdash; que e o mes da energia gerada. As contas das UCs recebedoras costumam ser do mes seguinte, conforme a usina.</p></div>';
     h+='<div class="panel"><h2>Ciclos de fechamento</h2>';
     if(!S.u.ciclos.length)h+='<p class="empty">Nenhum ciclo aberto ainda. Abra o primeiro ciclo para comecar a subir documentos.</p>';
-    else{h+='<div class="tblwrap"><table><tr><th>Mes fatura</th><th>Mes geracao</th><th>Status</th><th class="num">Docs</th><th>Observacoes</th><th></th></tr>';
+    else{h+='<div class="tblwrap"><table><tr><th>Ciclo (competencia da geradora)</th><th>Contas das recebedoras</th><th>Status</th><th class="num">Docs</th><th>Observacoes</th><th></th></tr>';
       S.u.ciclos.forEach(function(c){
         var nd=S.u.docs.filter(function(d){return d.ciclo_id===c.id;}).length;
-        h+='<tr><td><b>'+mesLbl(c.mes_referencia)+'</b></td><td>'+mesLbl(c.mes_geracao)+'</td><td><select class="inline" onchange="A.stCiclo(&quot;'+c.id+'&quot;,this.value)">';
+        h+='<tr><td><b>'+mesLbl(c.mes_referencia)+'</b></td><td>'+(c.mes_faturamento?mesLbl(c.mes_faturamento):'&mdash;')+'</td><td><select class="inline" onchange="A.stCiclo(&quot;'+c.id+'&quot;,this.value)">';
         Object.keys(STCICLO).forEach(function(k){h+='<option value="'+k+'"'+(c.status===k?' selected':'')+'>'+STCICLO[k][0]+'</option>';});
         h+='</select></td><td class="num">'+nd+'</td><td>'+esc(c.observacoes||'')+'</td>';
         h+='<td><button class="btn mini'+(S.cicloSel===c.id?'':' sec')+'" onclick="A.verCiclo(&quot;'+c.id+'&quot;)">Detalhar</button></td></tr>';
@@ -1703,8 +1716,8 @@ window.A={
           if(!mes)throw new Error('Nao consegui definir o ciclo da '+us1.nome+'.');
           var cic=S.entrada.ciclos.filter(function(c){return c.usina_id===us1.id&&String(c.mes_referencia).slice(0,10)===mes;})[0];
           if(!cic){
-            var g=new Date(mes+'T12:00:00');g.setMonth(g.getMonth()-1);
-            var rc=await sb.from('ciclos').insert({usina_id:us1.id,mes_referencia:mes,mes_geracao:g.toISOString().slice(0,7)+'-01',status:'aberto'}).select().single();
+            // nome do ciclo = competencia da conta da geradora (= mes da geracao)
+            var rc=await sb.from('ciclos').insert({usina_id:us1.id,mes_referencia:mes,mes_geracao:mes,status:'aberto'}).select().single();
             if(rc.error)throw rc.error;cic=rc.data;S.entrada.ciclos.push(cic);
           }
           var path=us1.id+'/'+mes.slice(0,7)+'/'+Date.now()+'_'+nome;
@@ -1831,10 +1844,9 @@ window.A={
   cliUsina:function(id){S.cliUsinaFiltro=id;renderClientes();},
   abrirCiclo:async function(){
     try{
-      var m=val('nc-mes');if(!m)throw new Error('Escolha o mes de referencia.');
-      var y=Number(m.split('-')[0]),mo=Number(m.split('-')[1]);
-      var py=mo===1?y-1:y,pm=mo===1?12:mo-1;
-      var r=await sb.from('ciclos').insert({usina_id:S.usinaId,mes_referencia:m+'-01',mes_geracao:py+'-'+String(pm).padStart(2,'0')+'-01',status:'aberto'});
+      var m=val('nc-mes');if(!m)throw new Error('Escolha o mes do ciclo.');
+      // nome do ciclo = competencia da conta da geradora = mes da geracao
+      var r=await sb.from('ciclos').insert({usina_id:S.usinaId,mes_referencia:m+'-01',mes_geracao:m+'-01',status:'aberto'});
       if(r.error){if((r.error.message||'').indexOf('duplicate')>-1)throw new Error('Ja existe ciclo para esse mes nesta usina.');throw r.error;}
       toast('Ciclo aberto.');loadUsina().catch(fail);
     }catch(e){fail(e);}
