@@ -596,8 +596,8 @@ async function loadDash(){
   // urgencia: 0=pendencia, 1=data do proximo ciclo chegou, 2=em andamento, 3=faturado, 4=concluido em dia, 5=sem ciclo/sem dia
   var nivel=function(u){
     var c=latest[u.id];
-    var atrCic=c?atrasadas.filter(function(f){return f.ciclo_id===c.id;}).length:0;
-    var pend=(c?(pendCiclo[c.id]||0):0)+atrCic;
+    // fatura em atraso NAO entra aqui: e pendencia de cobranca, aparece no menu Financeiro
+    var pend=(c?(pendCiclo[c.id]||0):0);
     if(pend>0)return 0;
     var pi=proxInfo(u);
     // ciclo anterior fechado + data da proxima leitura chegou = fluxo normal do mes:
@@ -641,12 +641,9 @@ async function loadDash(){
       if(!fFat&&cs.length&&!aVer&&!semConta)pend.push({t:'Pronto para faturar',s:'warn'});
       else if(!fFat)pend.push({t:'Faturamento pendente',s:'warn'});
     }
-    var atr=fs.filter(function(f){return f.status==='vencida'||(f.status==='emitida'&&f.vencimento&&f.vencimento<hojeISO);}).length;
-    var aguard=fs.filter(function(f){return f.status==='emitida'&&!(f.vencimento&&f.vencimento<hojeISO);}).length;
-    if(atr)pend.push({t:atr+' fatura'+(atr===1?'':'s')+' em atraso',s:'bad'});
-    if(aguard)pend.push({t:aguard+' aguardando pagamento',s:'muted'});
-    var antigas=atrasadas.filter(function(f){return f.ciclos&&f.ciclos.usina_id===u.id&&f.ciclo_id!==c.id;}).length;
-    if(antigas)pend.push({t:antigas+' fatura'+(antigas===1?'':'s')+' vencida'+(antigas===1?'':'s')+' de ciclo anterior',s:'bad'});
+    // cobranca (vencidas/aguardando) fica no menu Financeiro; aqui so o que depende do operador no ciclo
+    var aguard=fs.filter(function(f){return f.status==='emitida';}).length;
+    if(aguard)pend.push({t:aguard+' fatura'+(aguard===1?'':'s')+' aguardando pagamento',s:'muted'});
     return {pct:pct,pend:pend};
   };
 
@@ -782,7 +779,7 @@ async function loadDash(){
   });
   atrasadas.forEach(function(f){
     var un=usinas.filter(function(u){return f.ciclos&&u.id===f.ciclos.usina_id;})[0];
-    itens.push({key:'fatura:'+f.id, uid:un?un.id:null, txt:'Fatura '+(f.numero?f.numero+'/'+f.ano:'s/n')+' &middot; '+esc(f.clientes?f.clientes.nome:'')+' &middot; '+money(f.valor)+' &middot; venceu '+dt(f.vencimento)+(un?' &mdash; '+esc(un.nome):''), tipo:'bad'});
+    itens.push({key:'fatura:'+f.id, uid:un?un.id:null, txt:'<b>Cobranca:</b> fatura '+(f.numero?f.numero+'/'+f.ano:'s/n')+' &middot; '+esc(f.clientes?f.clientes.nome:'')+' &middot; '+money(f.valor)+' &middot; venceu '+dt(f.vencimento)+(un?' &mdash; '+esc(un.nome):'')+' <a href="#" onclick="event.preventDefault();event.stopPropagation();go(&quot;cob&quot;)" style="font-size:12px">ver no Financeiro</a>', tipo:'warn'});
   });
   ativas.forEach(function(u){
     var c=latest[u.id];
