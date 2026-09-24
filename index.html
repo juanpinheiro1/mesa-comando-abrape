@@ -1709,8 +1709,8 @@ window.A={
         var q=await Promise.all([
           sb.from('ucs').select('id,numero_uc,matricula,proxima_leitura,ultima_leitura'),
           sb.from('rateios').select('usina_id,uc_id,vigencia_fim, usinas(id,nome,ativo)').is('vigencia_fim',null),
-          sb.from('ciclos').select('id,usina_id,mes_referencia,status'),
-          sb.from('documentos').select('uc_id,usina_id,ciclo_id,ref_leitura,storage_path, ciclos(mes_referencia)').eq('tipo','conta_uc_recebedora').not('uc_id','is',null),
+          sb.from('ciclos').select('id,usina_id,mes_referencia,mes_faturamento,status'),
+          sb.from('documentos').select('uc_id,usina_id,ciclo_id,ref_leitura,storage_path,nome_arquivo, ciclos(mes_referencia,mes_faturamento)').eq('tipo','conta_uc_recebedora').not('uc_id','is',null),
           sb.from('grupo_documentos').select('grupo_uc_id,ref_leitura,nome_arquivo,ciclo_id')
         ]);
         for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
@@ -1728,13 +1728,19 @@ window.A={
           if(!id.ehConta){rel.erros.push(f.name+': nao reconhecido como conta de energia');continue;}
           // 1) qual loja e esta conta?
           var uc=gucs.filter(function(u){return (id.uc&&dig(u.numero_uc)&&dig(u.numero_uc)===dig(id.uc))||(id.matricula&&dig(u.matricula)&&dig(u.matricula)===dig(id.matricula));})[0];
-          if(!uc){var base=f.name.replace(/\.[^.]+$/,'').trim().toLowerCase();uc=gucs.filter(function(u){return u.apelido&&(u.apelido.toLowerCase()===base||base.indexOf(u.apelido.toLowerCase())===0);})[0];}
+          if(!uc){var base=f.name.replace(/\.[^.]+$/,'').trim().toLowerCase();uc=gucs.filter(function(u){if(!u.apelido)return false;var ap=u.apelido.toLowerCase();return ap===base||(ap.length<=12&&new RegExp('^'+ap.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'([^a-z0-9]|$)').test(base));})[0];}
+          // a UC impressa manda: se o nome do arquivo apontou uma loja mas a conta e de outra UC cadastrada, usa a da conta
+          if(uc&&(id.uc||id.matricula)&&!((id.uc&&dig(uc.numero_uc)===dig(id.uc))||(id.matricula&&dig(uc.matricula)===dig(id.matricula)))){
+            var certa=gucs.filter(function(u){return (id.uc&&dig(u.numero_uc)&&dig(u.numero_uc)===dig(id.uc))||(id.matricula&&dig(u.matricula)&&dig(u.matricula)===dig(id.matricula));})[0];
+            if(certa)uc=certa; else if(dig(uc.numero_uc)||dig(uc.matricula))uc=null; // cadastro tem numero e nao bate: e UC nova
+          }
           var nova=false;
           if(!uc){
             if(!id.uc&&!id.matricula){rel.erros.push(f.name+': nao consegui identificar a UC nem a matricula');continue;}
             // 2) UC nova no grupo: cadastra e ja entra no agendamento da caixa de entrada
             var ucAbrape=ctx.ucs.filter(function(x){return (id.uc&&dig(x.numero_uc)===dig(id.uc))||(id.matricula&&dig(x.matricula)===dig(id.matricula));})[0];
-            var apelido=(f.name.replace(/\.[^.]+$/,'').trim().slice(0,40))||('UC '+(id.uc||id.matricula));
+            var base0=f.name.replace(/\.[^.]+$/,'').trim();
+            var apelido=/^R-?\d{1,3}\b/i.test(base0)?base0.split(/\s*[-\u2013]\s*/)[0].trim().slice(0,30):('UC '+(id.uc||id.matricula)+' (nova - identificar)');
             var ins=await sb.from('grupo_ucs').insert({grupo_id:S.grpId,apelido:apelido,numero_uc:id.uc,matricula:id.matricula,classificacao:id.classe,ativo:true,proxima_leitura:id.proxISO,ultima_leitura:id.atualISO,uc_id:ucAbrape?ucAbrape.id:null,observacoes:'Cadastrada automaticamente em '+new Date().toLocaleDateString('pt-BR')+' a partir da conta '+f.name+(id.titular?' ('+id.titular+')':'')+'. Conferir o apelido.'}).select().single();
             if(ins.error)throw ins.error;
             uc=ins.data;gucs.push(uc);S.grp.ucs.push(uc);nova=true;
@@ -1744,7 +1750,8 @@ window.A={
             if(liga){await sb.from('grupo_ucs').update({uc_id:liga.id}).eq('id',uc.id);uc.uc_id=liga.id;}
           }
           // 3) a mesma conta ja esta na Mesa? (mesma loja, mesma leitura)
-          var jaGrupo=ctx.gdocs.some(function(d){return d.grupo_uc_id===uc.id&&((id.atualISO&&perto(d.ref_leitura,id.atualISO))||d.nome_arquivo===f.name&&d.ciclo_id===c.id);});
+          var mesConta=id.atualISO?id.atualISO.slice(0,7):null;
+          var jaGrupo=ctx.gdocs.some(function(d){return d.grupo_uc_id===uc.id&&((id.atualISO&&perto(d.ref_leitura,id.atualISO))||(mesConta&&d.ref_leitura&&String(d.ref_leitura).slice(0,7)===mesConta)||(d.nome_arquivo===f.name&&d.ciclo_id===c.id));});
           if(jaGrupo){rel.ignoradas.push((uc.apelido||f.name)+' - conta de '+(id.atual||'?')+' ja estava na Mesa');continue;}
           // grava no grupo
           var nome=f.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9._-]/g,'_');
@@ -1753,6 +1760,7 @@ window.A={
           var r=await sb.from('grupo_documentos').insert({ciclo_id:c.id,grupo_uc_id:uc.id,nome_arquivo:f.name,storage_path:path,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email,ref_leitura:id.atualISO||uc.proxima_leitura||null});
           if(r.error)throw r.error;
           ctx.gdocs.push({grupo_uc_id:uc.id,ref_leitura:id.atualISO,nome_arquivo:f.name,ciclo_id:c.id});
+          // ciclo do grupo certo = mes da leitura da conta (se a conta for de outro mes, vai para o ciclo daquele mes)
           rel.salvas.push(uc.apelido||f.name);
           if(id.prox)await A.grpAtualizaLeitura(uc.id,{prox:id.prox,atual:id.atual});
           // 4) a loja tambem e recebedora de usina ABRAPE? replica a conta no ciclo certo de cada usina
@@ -1761,19 +1769,25 @@ window.A={
             for(var k=0;k<rats.length;k++){
               var usn=rats[k].usinas;
               try{
-                var jaUs=ctx.docs.some(function(d){return d.uc_id===uc.uc_id&&d.usina_id===usn.id&&(perto(d.ref_leitura,id.atualISO)||d.storage_path===path);});
+                var mesC=(id.atualISO||'').slice(0,7);
+                var jaUs=ctx.docs.some(function(d){return d.uc_id===uc.uc_id&&d.usina_id===usn.id&&(perto(d.ref_leitura,id.atualISO)||d.storage_path===path||(mesC&&d.ref_leitura&&String(d.ref_leitura).slice(0,7)===mesC)||(mesC&&d.ciclos&&d.ciclos.mes_faturamento&&String(d.ciclos.mes_faturamento).slice(0,7)===mesC));});
                 if(jaUs){rel.usinas.push(uc.apelido+' -> '+usn.nome+': ja tinha esta conta');continue;}
-                var ult=ctx.docs.filter(function(d){return d.uc_id===uc.uc_id&&d.usina_id===usn.id&&d.ciclos;}).map(function(d){return String(d.ciclos.mes_referencia).slice(0,10);}).sort().pop();
                 var cics=ctx.ciclos.filter(function(x){return x.usina_id===usn.id;}).sort(function(a,b){return String(b.mes_referencia).localeCompare(String(a.mes_referencia));});
-                var mes=ult?addMes(ult,1):(cics.filter(function(x){return x.status!=='concluido';})[0]||{}).mes_referencia;
-                if(!mes&&cics[0])mes=addMes(cics[0].mes_referencia,1);
-                if(!mes)mes=(id.atualISO||hojeLocal()).slice(0,7)+'-01';
-                mes=String(mes).slice(0,10);
-                var cic=cics.filter(function(x){return String(x.mes_referencia).slice(0,10)===mes;})[0];
-                if(!cic){var rc=await sb.from('ciclos').insert({usina_id:usn.id,mes_referencia:mes,mes_geracao:mes,status:'aberto'}).select().single();if(rc.error)throw rc.error;cic=rc.data;ctx.ciclos.push(cic);}
+                // ciclo certo = aquele cujas contas das recebedoras sao do mes desta conta; senao, o ciclo seguinte ao ultimo
+                var cic=mesC?cics.filter(function(x){return x.mes_faturamento&&String(x.mes_faturamento).slice(0,7)===mesC;})[0]:null;
+                var mes;
+                if(cic)mes=String(cic.mes_referencia).slice(0,10);
+                else{
+                  var ult=cics[0]?String(cics[0].mes_referencia).slice(0,10):null;
+                  var lag=cics[0]&&cics[0].mes_faturamento?(function(){var a=new Date(String(cics[0].mes_referencia).slice(0,10)+'T12:00:00'),b=new Date(String(cics[0].mes_faturamento).slice(0,10)+'T12:00:00');return (b.getFullYear()-a.getFullYear())*12+(b.getMonth()-a.getMonth());})():0;
+                  mes=mesC?addMes(mesC+'-01',-lag):(ult?addMes(ult,1):hojeLocal().slice(0,7)+'-01');
+                  mes=String(mes).slice(0,10);
+                  cic=cics.filter(function(x){return String(x.mes_referencia).slice(0,10)===mes;})[0];
+                  if(!cic){var rc=await sb.from('ciclos').insert({usina_id:usn.id,mes_referencia:mes,mes_geracao:mes,mes_faturamento:mesC?mesC+'-01':null,status:'aberto'}).select().single();if(rc.error)throw rc.error;cic=rc.data;ctx.ciclos.push(cic);}
+                }
                 var rd=await sb.from('documentos').insert({usina_id:usn.id,ciclo_id:cic.id,uc_id:uc.uc_id,tipo:'conta_uc_recebedora',storage_path:path,nome_arquivo:f.name,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email,ref_leitura:id.atualISO||null,validacao:'Replicada automaticamente do envio em lote da Gestao de Grupos.'});
                 if(rd.error)throw rd.error;
-                ctx.docs.push({uc_id:uc.uc_id,usina_id:usn.id,ciclo_id:cic.id,ref_leitura:id.atualISO,storage_path:path,ciclos:{mes_referencia:mes}});
+                ctx.docs.push({uc_id:uc.uc_id,usina_id:usn.id,ciclo_id:cic.id,ref_leitura:id.atualISO,storage_path:path,ciclos:{mes_referencia:mes,mes_faturamento:cic.mes_faturamento}});
                 if(id.proxISO)await sb.from('ucs').update({proxima_leitura:id.proxISO,proxima_leitura_estimada:false,ultima_leitura:id.atualISO}).eq('id',uc.uc_id);
                 rel.usinas.push(uc.apelido+' -> '+usn.nome+' (ciclo '+mesLbl(mes)+')');
               }catch(eu){rel.erros.push(uc.apelido+' -> '+usn.nome+': '+(eu.message||eu));}
