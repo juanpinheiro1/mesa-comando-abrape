@@ -284,6 +284,24 @@ function conferirConta(txt,esperado,qual){
   if(mr)dados.ref=mr[0];
   return {avisos:avisos,dados:dados};
 }
+// Le os dados de identificacao de uma conta de energia (UC, matricula, leituras, referencia, titular)
+function identificarConta(txt){
+  var t=String(txt||'').replace(/\u00a0/g,' '), d={};
+  var m=t.match(/(\d{1,3}(?:\.\d{3}){2,3}-\d{2})/); d.uc=m?m[1]:null;
+  var mm=t.match(/D[ÉE]BITO AUTOM[ÁA]TICO UTILIZANDO O C[ÓO]DIGO:\s*0*(\d{4,9})-\d/i)||t.match(/\b0*(\d{5,8})-20\d\d-\d\d-\d\b/);
+  d.matricula=mm?String(Number(mm[1])):null;
+  var m2=t.match(/(\d\d\/\d\d\/\d{4})\s*\n\s*(\d\d\/\d\d\/\d{4})\s*\n\s*(\d{1,3})\s*\n\s*(\d\d\/\d\d\/\d{4})/);
+  var m3=t.match(/(\d\d\/\d\d\/\d{4})\s*\n\s*(\d\d\/\d\d\/\d{4})\s*\n\s*(\d{1,3})\s*\n\s*Pr.xima leitura\s*\n?\s*(\d\d\/\d\d\/\d{4})/i);
+  if(m3){d.atual=m3[1];d.ant=m3[2];d.dias=Number(m3[3]);d.prox=m3[4];}
+  else if(m2){d.prox=m2[1];d.ant=m2[2];d.dias=Number(m2[3]);d.atual=m2[4];}
+  var iso=function(br){if(!br)return null;var p=br.split('/');return p[2]+'-'+p[1]+'-'+p[0];};
+  d.atualISO=iso(d.atual);d.proxISO=iso(d.prox);d.antISO=iso(d.ant);
+  var mr=t.match(/(Janeiro|Fevereiro|Mar.o|Abril|Maio|Junho|Julho|Agosto|Setembro|Outubro|Novembro|Dezembro)\s*\/\s*(\d{4})/i); d.ref=mr?mr[0]:null;
+  var mc=t.match(/Classif\s*ica..o:\s*([^\n]{3,60})/i); d.classe=mc?mc[1].trim():null;
+  var mt=t.match(/ENERGISA[^\n]*\n(?:[^\n]*\n){0,4}?([A-Z][A-Z0-9 .&'\-]{4,60})\n[^\n]*CAMPINA|\n([A-Z][A-Z0-9 .&'\-]{6,60} LTDA[^\n]*)\n/); d.titular=mt?(mt[1]||mt[2]).trim():null;
+  d.ehConta=/danf3e|nota fiscal\s*\/?\s*conta de energia|nota fiscal n|pr.xima leitura/i.test(t)&&!/demonstrativo de compensa/i.test(t);
+  return d;
+}
 function modalConferencia(res,nomeArq){
   return new Promise(function(resolve){
     var x='<h2>Confira o arquivo</h2>';
@@ -1633,81 +1651,100 @@ window.A={
     var inp=document.createElement('input');inp.type='file';inp.accept='application/pdf,.pdf';inp.multiple=true;
     inp.onchange=async function(){
       var fs=Array.prototype.slice.call(inp.files||[]);if(!fs.length)return;
-      var okN=0,erros=[];
-      toast('Enviando '+fs.length+' arquivo(s)\u2026');
+      var rel={salvas:[],ignoradas:[],novas:[],usinas:[],erros:[]};
+      toast('Lendo '+fs.length+' arquivo(s)\u2026');
+      // contexto das usinas ABRAPE: UCs, rateios vigentes, ciclos e contas ja anexadas
+      var ctx=null;
+      try{
+        var q=await Promise.all([
+          sb.from('ucs').select('id,numero_uc,matricula,proxima_leitura,ultima_leitura'),
+          sb.from('rateios').select('usina_id,uc_id,vigencia_fim, usinas(id,nome,ativo)').is('vigencia_fim',null),
+          sb.from('ciclos').select('id,usina_id,mes_referencia,status'),
+          sb.from('documentos').select('uc_id,usina_id,ciclo_id,ref_leitura,storage_path, ciclos(mes_referencia)').eq('tipo','conta_uc_recebedora').not('uc_id','is',null),
+          sb.from('grupo_documentos').select('grupo_uc_id,ref_leitura,nome_arquivo,ciclo_id')
+        ]);
+        for(var i=0;i<q.length;i++){if(q[i].error)throw q[i].error;}
+        ctx={ucs:q[0].data||[],rateios:(q[1].data||[]).filter(function(r){return r.usinas&&r.usinas.ativo!==false;}),ciclos:q[2].data||[],docs:q[3].data||[],gdocs:q[4].data||[]};
+      }catch(e){fail(e);return;}
+      var dig=function(v){return String(v||'').replace(/\D/g,'');};
+      var addMes=function(isoMes,n){var d=new Date(String(isoMes).slice(0,10)+'T12:00:00');d.setMonth(d.getMonth()+n);return d.toISOString().slice(0,7)+'-01';};
+      var perto=function(a,b){if(!a||!b)return false;return Math.abs((new Date(String(a).slice(0,10))-new Date(String(b).slice(0,10)))/86400000)<=5;};
+      var gucs=(S.grp.ucs||[]).filter(function(u){return u.grupo_id===S.grpId;});
       for(var i=0;i<fs.length;i++){
         var f=fs[i];
         try{
+          var txt='';try{txt=await textoDoPdf(f);}catch(e0){}
+          var id=identificarConta(txt);
+          if(!id.ehConta){rel.erros.push(f.name+': nao reconhecido como conta de energia');continue;}
+          // 1) qual loja e esta conta?
+          var uc=gucs.filter(function(u){return (id.uc&&dig(u.numero_uc)&&dig(u.numero_uc)===dig(id.uc))||(id.matricula&&dig(u.matricula)&&dig(u.matricula)===dig(id.matricula));})[0];
+          if(!uc){var base=f.name.replace(/\.[^.]+$/,'').trim().toLowerCase();uc=gucs.filter(function(u){return u.apelido&&(u.apelido.toLowerCase()===base||base.indexOf(u.apelido.toLowerCase())===0);})[0];}
+          var nova=false;
+          if(!uc){
+            if(!id.uc&&!id.matricula){rel.erros.push(f.name+': nao consegui identificar a UC nem a matricula');continue;}
+            // 2) UC nova no grupo: cadastra e ja entra no agendamento da caixa de entrada
+            var ucAbrape=ctx.ucs.filter(function(x){return (id.uc&&dig(x.numero_uc)===dig(id.uc))||(id.matricula&&dig(x.matricula)===dig(id.matricula));})[0];
+            var apelido=(f.name.replace(/\.[^.]+$/,'').trim().slice(0,40))||('UC '+(id.uc||id.matricula));
+            var ins=await sb.from('grupo_ucs').insert({grupo_id:S.grpId,apelido:apelido,numero_uc:id.uc,matricula:id.matricula,classificacao:id.classe,ativo:true,proxima_leitura:id.proxISO,ultima_leitura:id.atualISO,uc_id:ucAbrape?ucAbrape.id:null,observacoes:'Cadastrada automaticamente em '+new Date().toLocaleDateString('pt-BR')+' a partir da conta '+f.name+(id.titular?' ('+id.titular+')':'')+'. Conferir o apelido.'}).select().single();
+            if(ins.error)throw ins.error;
+            uc=ins.data;gucs.push(uc);S.grp.ucs.push(uc);nova=true;
+            rel.novas.push(apelido+(id.uc?' ('+id.uc+')':''));
+          } else if(!uc.uc_id){
+            var liga=ctx.ucs.filter(function(x){return (dig(uc.numero_uc)&&dig(x.numero_uc)===dig(uc.numero_uc))||(dig(uc.matricula)&&dig(x.matricula)===dig(uc.matricula));})[0];
+            if(liga){await sb.from('grupo_ucs').update({uc_id:liga.id}).eq('id',uc.id);uc.uc_id=liga.id;}
+          }
+          // 3) a mesma conta ja esta na Mesa? (mesma loja, mesma leitura)
+          var jaGrupo=ctx.gdocs.some(function(d){return d.grupo_uc_id===uc.id&&((id.atualISO&&perto(d.ref_leitura,id.atualISO))||d.nome_arquivo===f.name&&d.ciclo_id===c.id);});
+          if(jaGrupo){rel.ignoradas.push((uc.apelido||f.name)+' - conta de '+(id.atual||'?')+' ja estava na Mesa');continue;}
+          // grava no grupo
           var nome=f.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9._-]/g,'_');
           var path='grupos/'+S.grpId+'/'+String(c.mes_referencia).slice(0,7)+'/'+Date.now()+'_'+nome;
           var up=await sb.storage.from('documentos').upload(path,f);if(up.error)throw up.error;
-          // tenta identificar a loja pelo nome do arquivo (apelido cadastrado)
-          var base=f.name.replace(/\.[^.]+$/,'').trim().toLowerCase();
-          var uc=(S.grp.ucs||[]).filter(function(u){return u.grupo_id===S.grpId&&u.apelido&&(u.apelido.toLowerCase()===base||base.indexOf(u.apelido.toLowerCase())===0);})[0];
-          var lido=null;
-          try{ var txt=await textoDoPdf(f); var dd=conferirConta(txt,{numero_uc:(uc&&uc.numero_uc)||'',matricula:(uc&&uc.matricula)||'',prox:uc?uc.proxima_leitura:null},'conta'); lido=dd.dados;
-            if(!uc&&lido&&lido.uc){ var alvo=(S.grp.ucs||[]).filter(function(x){return x.grupo_id===S.grpId&&(String(x.numero_uc||'').replace(/\D/g,'')===String(lido.uc).replace(/\D/g,''));})[0]; if(alvo)uc=alvo; }
-          }catch(e2){}
-          var r=await sb.from('grupo_documentos').insert({ciclo_id:c.id,grupo_uc_id:uc?uc.id:null,nome_arquivo:f.name,storage_path:path,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email,ref_leitura:uc?uc.proxima_leitura:null});
-          if(r.error)throw r.error;okN++;
-          if(uc&&lido&&lido.prox)await A.grpAtualizaLeitura(uc.id,lido);
-        }catch(e){erros.push(f.name);}
+          var r=await sb.from('grupo_documentos').insert({ciclo_id:c.id,grupo_uc_id:uc.id,nome_arquivo:f.name,storage_path:path,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email,ref_leitura:id.atualISO||uc.proxima_leitura||null});
+          if(r.error)throw r.error;
+          ctx.gdocs.push({grupo_uc_id:uc.id,ref_leitura:id.atualISO,nome_arquivo:f.name,ciclo_id:c.id});
+          rel.salvas.push(uc.apelido||f.name);
+          if(id.prox)await A.grpAtualizaLeitura(uc.id,{prox:id.prox,atual:id.atual});
+          // 4) a loja tambem e recebedora de usina ABRAPE? replica a conta no ciclo certo de cada usina
+          if(uc.uc_id){
+            var rats=ctx.rateios.filter(function(x){return x.uc_id===uc.uc_id;});
+            for(var k=0;k<rats.length;k++){
+              var usn=rats[k].usinas;
+              try{
+                var jaUs=ctx.docs.some(function(d){return d.uc_id===uc.uc_id&&d.usina_id===usn.id&&(perto(d.ref_leitura,id.atualISO)||d.storage_path===path);});
+                if(jaUs){rel.usinas.push(uc.apelido+' -> '+usn.nome+': ja tinha esta conta');continue;}
+                var ult=ctx.docs.filter(function(d){return d.uc_id===uc.uc_id&&d.usina_id===usn.id&&d.ciclos;}).map(function(d){return String(d.ciclos.mes_referencia).slice(0,10);}).sort().pop();
+                var cics=ctx.ciclos.filter(function(x){return x.usina_id===usn.id;}).sort(function(a,b){return String(b.mes_referencia).localeCompare(String(a.mes_referencia));});
+                var mes=ult?addMes(ult,1):(cics.filter(function(x){return x.status!=='concluido';})[0]||{}).mes_referencia;
+                if(!mes&&cics[0])mes=addMes(cics[0].mes_referencia,1);
+                if(!mes)mes=(id.atualISO||hojeLocal()).slice(0,7)+'-01';
+                mes=String(mes).slice(0,10);
+                var cic=cics.filter(function(x){return String(x.mes_referencia).slice(0,10)===mes;})[0];
+                if(!cic){var rc=await sb.from('ciclos').insert({usina_id:usn.id,mes_referencia:mes,mes_geracao:mes,status:'aberto'}).select().single();if(rc.error)throw rc.error;cic=rc.data;ctx.ciclos.push(cic);}
+                var rd=await sb.from('documentos').insert({usina_id:usn.id,ciclo_id:cic.id,uc_id:uc.uc_id,tipo:'conta_uc_recebedora',storage_path:path,nome_arquivo:f.name,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email,ref_leitura:id.atualISO||null,validacao:'Replicada automaticamente do envio em lote da Gestao de Grupos.'});
+                if(rd.error)throw rd.error;
+                ctx.docs.push({uc_id:uc.uc_id,usina_id:usn.id,ciclo_id:cic.id,ref_leitura:id.atualISO,storage_path:path,ciclos:{mes_referencia:mes}});
+                if(id.proxISO)await sb.from('ucs').update({proxima_leitura:id.proxISO,proxima_leitura_estimada:false,ultima_leitura:id.atualISO}).eq('id',uc.uc_id);
+                rel.usinas.push(uc.apelido+' -> '+usn.nome+' (ciclo '+mesLbl(mes)+')');
+              }catch(eu){rel.erros.push(uc.apelido+' -> '+usn.nome+': '+(eu.message||eu));}
+            }
+          }
+        }catch(e){rel.erros.push(f.name+': '+(e.message||e));}
       }
       try{
-        var ja=(S.grp.fila||[]).filter(function(x){return x.grupo_ciclo_id===c.id;}).length;
-        if(!ja)await sb.from('solicitacoes').insert({tipo:'grupo_documento',grupo_ciclo_id:c.id,solicitado_por:S.perfil.email,observacoes:JSON.stringify({grupo:S.grpId,mes:c.mes_referencia})});
+        if(rel.salvas.length){var ja=(S.grp.fila||[]).filter(function(x){return x.grupo_ciclo_id===c.id&&x.tipo==='grupo_documento';}).length;
+          if(!ja)await sb.from('solicitacoes').insert({tipo:'grupo_documento',grupo_ciclo_id:c.id,solicitado_por:S.perfil.email,observacoes:JSON.stringify({grupo:S.grpId,mes:c.mes_referencia,arquivos:rel.salvas})});}
       }catch(e){}
-      toast(okN+' arquivo(s) enviados'+(erros.length?' &middot; '+erros.length+' falharam':'')+'. Item na fila do Claude.');
+      var h='<h2 style="margin:0 0 10px">Envio em lote &mdash; '+mesLbl(c.mes_referencia)+'</h2>';
+      var bloco=function(tit,arr,cls){if(!arr.length)return '';return '<div style="margin:8px 0"><b>'+tit+' ('+arr.length+')</b><ul style="margin:4px 0 0 18px;font-size:13px">'+arr.map(function(x){return '<li'+(cls?' style="color:var(--'+cls+')"':'')+'>'+esc(x)+'</li>';}).join('')+'</ul></div>';};
+      h+=bloco('Contas salvas no grupo',rel.salvas);
+      h+=bloco('Replicadas para as usinas ABRAPE',rel.usinas);
+      h+=bloco('UCs novas cadastradas no grupo (confira o apelido)',rel.novas,'warn');
+      h+=bloco('Ignoradas - ja estavam na Mesa',rel.ignoradas,'muted');
+      h+=bloco('Nao foi possivel',rel.erros,'bad');
+      h+='<div style="margin-top:12px;text-align:right"><button class="btn" onclick="A.closeModal()">OK</button></div>';
+      A.modal(h);
       loadGrupos().catch(fail);
-    };
-    inp.click();
-  },
-  grpConsultarGeracao:async function(grupoUsinaId){
-    try{
-      var c=(S.grp.ciclos||[]).filter(function(x){return x.id===S.grpCiclo;})[0];if(!c)return;
-      var lista=(S.grpElegiveis||[]).filter(function(e){return !grupoUsinaId||e.grupo_usina_id===grupoUsinaId;});
-      if(!lista.length){toast('Nenhuma usina elegivel: e preciso ter a conta da loja lida neste ciclo e o nome da usina nos portais.');return;}
-      var ja=(S.grp.fila||[]).filter(function(x){return x.grupo_ciclo_id===c.id&&x.tipo==='geracao_grupo';})[0];
-      var obs={grupo:S.grpId,ciclo:c.id,mes:c.mes_referencia,usinas:[]};
-      if(ja){try{obs=JSON.parse(ja.observacoes||'{}');obs.usinas=obs.usinas||[];}catch(e){}}
-      var novos=0;
-      lista.forEach(function(e){if(!obs.usinas.some(function(z){return z.grupo_usina_id===e.grupo_usina_id;})){obs.usinas.push(e);novos++;}});
-      if(!novos){toast('Essas usinas ja estao na fila de consulta.');return;}
-      if(!window.confirm('Pedir ao Claude a consulta da geracao de '+novos+' usina(s) nos portais RENAC SEC / AUXSOL, no intervalo da conta de cada loja?\n\nObs.: os portais pedem login - quem rodar a fila precisa estar logado na conta VERTYSNORDESTE.'))return;
-      var r=ja?await sb.from('solicitacoes').update({observacoes:JSON.stringify(obs)}).eq('id',ja.id)
-              :await sb.from('solicitacoes').insert({tipo:'geracao_grupo',grupo_ciclo_id:c.id,solicitado_por:S.perfil.email,observacoes:JSON.stringify(obs)});
-      if(r.error)throw r.error;
-      toast(novos+' consulta(s) de geracao na fila do Claude. Diga "roda a fila".');
-      loadGrupos().catch(fail);
-    }catch(e){fail(e);}
-  },
-  grpUploadUC:function(ucId){
-    var c=(S.grp.ciclos||[]).filter(function(x){return x.id===S.grpCiclo;})[0];if(!c)return;
-    var u=(S.grp.ucs||[]).filter(function(x){return x.id===ucId;})[0];if(!u)return;
-    var inp=document.createElement('input');inp.type='file';inp.accept='application/pdf,.pdf';
-    inp.onchange=async function(){
-      try{
-        var f=inp.files[0];if(!f)return;
-        var obsConf=null, lido=null;
-        try{
-          toast('Conferindo a conta de '+esc(u.apelido||'')+'\u2026');
-          var res=conferirConta(await textoDoPdf(f),{numero_uc:u.numero_uc||'',matricula:u.matricula||'',prox:u.proxima_leitura||null},'conta');
-          lido=res.dados;
-          if(res.avisos.length){
-            if(!await modalConferencia(res,f.name)){toast('Envio cancelado.');return;}
-            obsConf='ENVIADO COM DIVERGENCIA ('+new Date().toLocaleString('pt-BR')+'): '+res.avisos.map(function(a){return a.replace(/<[^>]+>/g,'');}).join(' | ');
-          }
-        }catch(errc){obsConf='Nao foi possivel conferir o arquivo automaticamente: '+(errc.message||errc);}
-        var nome=f.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9._-]/g,'_');
-        var path='grupos/'+S.grpId+'/'+String(c.mes_referencia).slice(0,7)+'/'+Date.now()+'_'+nome;
-        var up=await sb.storage.from('documentos').upload(path,f);if(up.error)throw up.error;
-        var r=await sb.from('grupo_documentos').insert({ciclo_id:c.id,grupo_uc_id:u.id,nome_arquivo:f.name,storage_path:path,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email,validacao:obsConf,ref_leitura:u.proxima_leitura||null});
-        if(r.error)throw r.error;
-        await A.grpFilaDoc(c.id);
-        if(lido&&lido.prox&&!obsConf)await A.grpAtualizaLeitura(u.id,lido);
-        toast('Conta de '+esc(u.apelido||'')+' enviada para '+mesLbl(c.mes_referencia)+(obsConf?' com divergencia':'')+'. Item na fila do Claude.');
-        loadGrupos().catch(fail);
-      }catch(err){fail(err);}
     };
     inp.click();
   },
