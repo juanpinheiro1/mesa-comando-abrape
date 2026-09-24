@@ -315,6 +315,44 @@ function modalConferencia(res,nomeArq){
   });
 }
 
+// A UC impressa na conta vale mais que o nome do arquivo ou a linha clicada.
+function ucBate(txt,esperado){
+  var dig=function(v){return String(v||'').replace(/\D/g,'');};
+  var d=dig(txt), ucE=dig(esperado&&esperado.numero_uc), mE=dig(esperado&&esperado.matricula);
+  return (ucE.length>=8&&d.indexOf(ucE)>-1)||(mE.length>=5&&d.indexOf(mE)>-1);
+}
+function ucIgual(cand,id){
+  var dig=function(v){return String(v||'').replace(/\D/g,'');};
+  var cu=dig(cand&&cand.numero_uc), cm=dig(cand&&cand.matricula), iu=dig(id&&id.uc), im=dig(id&&id.matricula);
+  return (iu.length>=8&&cu===iu)||(im.length>=5&&cm===im);
+}
+// procura a UC lida no arquivo em toda a Mesa (usinas e grupos)
+async function localizarUC(id){
+  var q=await Promise.all([
+    sb.from('ucs').select('id,numero_uc,matricula,apelido, clientes(nome)'),
+    sb.from('grupo_ucs').select('id,grupo_id,apelido,numero_uc,matricula,uc_id,ativo')
+  ]);
+  return {uc:(q[0].data||[]).filter(function(x){return ucIgual(x,id);})[0]||null,
+          grupoUc:(q[1].data||[]).filter(function(x){return ucIgual(x,id);})[0]||null};
+}
+// modal: o arquivo e de outra UC. Retorna 'redirecionar' | 'mesmo' | 'cancelar'
+function modalUCDivergente(id,nomeArq,selecionada,alvo){
+  return new Promise(function(resolve){
+    var x='<h2>Este arquivo e de outra UC</h2>';
+    x+='<p class="note" style="margin-bottom:10px">Arquivo: <b>'+esc(nomeArq)+'</b>'+(id.ref?' &middot; referencia '+esc(id.ref):'')+(id.atual?' &middot; leitura '+esc(id.atual):'')+'</p>';
+    x+='<div class="tblwrap"><table>';
+    x+='<tr><th>UC selecionada</th><td>'+esc(selecionada)+'</td></tr>';
+    x+='<tr><th>UC impressa na conta</th><td><b>'+esc(id.uc||'')+'</b>'+(id.matricula?' &middot; matricula '+esc(id.matricula):'')+(id.titular?' &middot; '+esc(id.titular):'')+'</td></tr>';
+    x+='<tr><th>Onde ela esta na Mesa</th><td>'+alvo.texto+'</td></tr>';
+    x+='</table></div>';
+    x+='<p class="note" style="margin-top:10px">O nome do arquivo pode estar errado: a Mesa usa a UC impressa na conta. '+(alvo.pode?'Recomendado: <b>salvar na UC certa</b>.':'Como essa UC nao esta disponivel aqui, confira o arquivo antes de seguir.')+'</p>';
+    x+='<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn sec" onclick="A.respUC(&quot;cancelar&quot;)">Cancelar envio</button>';
+    if(alvo.pode)x+='<button class="btn" onclick="A.respUC(&quot;redirecionar&quot;)">Salvar na UC certa ('+esc(alvo.rotulo)+')</button>';
+    x+='<button class="btn sec" onclick="A.respUC(&quot;mesmo&quot;)">Salvar na UC selecionada assim mesmo</button></div>';
+    A._respUC=resolve;A.modal(x);
+  });
+}
+
 // ---------- GESTAO DE GRUPOS (clientes multi-UC: consumo, geracao propria, creditos, faturas) ----------
 async function loadGrupos(){
   var q=await Promise.all([
@@ -1607,7 +1645,18 @@ window.A={
         if(ucInfo&&tipo!=='outro'){
           try{
             toast('Conferindo o arquivo\u2026');
-            var res2=conferirConta(await textoDoPdf(f),{numero_uc:ucInfo.numero_uc,matricula:ucInfo.matricula,prox:ucInfo.proxima_leitura},tipo==='demonstrativo_energisa'?'demo':'conta');
+            var txt2=await textoDoPdf(f);
+            if(tipo==='conta_uc_recebedora'){
+              var idA=identificarConta(txt2);
+              if((idA.uc||idA.matricula)&&!ucBate(txt2,ucInfo)){
+                var r2=(S.u.rateios||[]).filter(function(r){return r.ucs&&r.uc_id!==ucId&&ucIgual(r.ucs,idA);})[0];
+                var alvo=r2?{pode:true,rotulo:ucRot(r2),texto:'Nesta usina: <b>'+esc(ucRot(r2))+'</b>'}:{pode:false,rotulo:'',texto:'Nao e UC desta usina. Se for de outra usina ou de grupo, envie pela <b>Caixa de entrada</b> do painel, que acha o destino certo.'};
+                var dec=await modalUCDivergente(idA,f.name,ucRot(ucRef||{ucs:ucInfo}),alvo);
+                if(dec==='cancelar'){toast('Envio cancelado.');return;}
+                if(dec==='redirecionar'){ucId=r2.uc_id;ucInfo=r2.ucs;toast('Anexando na UC '+esc(ucRot(r2))+'\u2026');}
+              }
+            }
+            var res2=conferirConta(txt2,{numero_uc:ucInfo.numero_uc,matricula:ucInfo.matricula,prox:ucInfo.proxima_leitura},tipo==='demonstrativo_energisa'?'demo':'conta');
             lido2=res2.dados;
             if(res2.avisos.length){
               var segue2=await modalConferencia(res2,f.name);
@@ -1635,6 +1684,7 @@ window.A={
     inp.click();
   },
   respConf:function(v){A.closeModal();if(A._respConf){var f=A._respConf;A._respConf=null;f(v);}},
+  respUC:function(v){A.closeModal();if(A._respUC){var f=A._respUC;A._respUC=null;f(v);}},
   grpSel:function(v){S.grpId=v;S.grpCiclo=null;loadGrupos().catch(fail);},
   grpCiclo:function(v){S.grpCiclo=v;renderGrupos();},
   grpNovoCiclo:async function(){
@@ -1748,6 +1798,64 @@ window.A={
     };
     inp.click();
   },
+  grpConsultarGeracao:async function(grupoUsinaId){
+    try{
+      var c=(S.grp.ciclos||[]).filter(function(x){return x.id===S.grpCiclo;})[0];if(!c)return;
+      var lista=(S.grpElegiveis||[]).filter(function(e){return !grupoUsinaId||e.grupo_usina_id===grupoUsinaId;});
+      if(!lista.length){toast('Nenhuma usina elegivel: e preciso ter a conta da loja lida neste ciclo e o nome da usina nos portais.');return;}
+      var ja=(S.grp.fila||[]).filter(function(x){return x.grupo_ciclo_id===c.id&&x.tipo==='geracao_grupo';})[0];
+      var obs={grupo:S.grpId,ciclo:c.id,mes:c.mes_referencia,usinas:[]};
+      if(ja){try{obs=JSON.parse(ja.observacoes||'{}');obs.usinas=obs.usinas||[];}catch(e){}}
+      var novos=0;
+      lista.forEach(function(e){if(!obs.usinas.some(function(z){return z.grupo_usina_id===e.grupo_usina_id;})){obs.usinas.push(e);novos++;}});
+      if(!novos){toast('Essas usinas ja estao na fila de consulta.');return;}
+      if(!window.confirm('Pedir ao Claude a consulta da geracao de '+novos+' usina(s) nos portais RENAC SEC / AUXSOL, no intervalo da conta de cada loja?\\n\\nObs.: os portais pedem login - quem rodar a fila precisa estar logado na conta VERTYSNORDESTE.'))return;
+      var r=ja?await sb.from('solicitacoes').update({observacoes:JSON.stringify(obs)}).eq('id',ja.id)
+              :await sb.from('solicitacoes').insert({tipo:'geracao_grupo',grupo_ciclo_id:c.id,solicitado_por:S.perfil.email,observacoes:JSON.stringify(obs)});
+      if(r.error)throw r.error;
+      toast(novos+' consulta(s) de geracao na fila do Claude. Diga "roda a fila".');
+      loadGrupos().catch(fail);
+    }catch(e){fail(e);}
+  },
+  grpUploadUC:function(ucId){
+    var c=(S.grp.ciclos||[]).filter(function(x){return x.id===S.grpCiclo;})[0];if(!c)return;
+    var u=(S.grp.ucs||[]).filter(function(x){return x.id===ucId;})[0];if(!u)return;
+    var inp=document.createElement('input');inp.type='file';inp.accept='application/pdf,.pdf';
+    inp.onchange=async function(){
+      try{
+        var f=inp.files[0];if(!f)return;
+        var obsConf=null, lido=null;
+        try{
+          toast('Conferindo a conta de '+esc(u.apelido||'')+'\u2026');
+          var txt=await textoDoPdf(f);
+          var idA=identificarConta(txt);
+          if((idA.uc||idA.matricula)&&!ucBate(txt,u)){
+            var outra=(S.grp.ucs||[]).filter(function(x){return x.grupo_id===S.grpId&&x.id!==u.id&&ucIgual(x,idA);})[0];
+            var alvo=outra?{pode:true,rotulo:outra.apelido,texto:'Neste grupo: <b>'+esc(outra.apelido)+'</b>'+(outra.proxima_leitura?' &middot; leitura prevista '+dt(outra.proxima_leitura):'')}:{pode:false,rotulo:'',texto:'<b>Nao e uma loja deste grupo.</b> Se for UC nova, use &quot;Enviar contas do mes&quot;, que cadastra sozinho.'};
+            var dec=await modalUCDivergente(idA,f.name,(u.apelido||'')+' '+(u.numero_uc||u.matricula||''),alvo);
+            if(dec==='cancelar'){toast('Envio cancelado.');return;}
+            if(dec==='redirecionar'){u=outra;toast('Salvando na loja '+esc(u.apelido)+'\u2026');}
+          }
+          var res=conferirConta(txt,{numero_uc:u.numero_uc||'',matricula:u.matricula||'',prox:u.proxima_leitura||null},'conta');
+          lido=res.dados;
+          if(res.avisos.length){
+            if(!await modalConferencia(res,f.name)){toast('Envio cancelado.');return;}
+            obsConf='ENVIADO COM DIVERGENCIA ('+new Date().toLocaleString('pt-BR')+'): '+res.avisos.map(function(a){return a.replace(/<[^>]+>/g,'');}).join(' | ');
+          }
+        }catch(errc){obsConf='Nao foi possivel conferir o arquivo automaticamente: '+(errc.message||errc);}
+        var nome=f.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9._-]/g,'_');
+        var path='grupos/'+S.grpId+'/'+String(c.mes_referencia).slice(0,7)+'/'+Date.now()+'_'+nome;
+        var up=await sb.storage.from('documentos').upload(path,f);if(up.error)throw up.error;
+        var r=await sb.from('grupo_documentos').insert({ciclo_id:c.id,grupo_uc_id:u.id,nome_arquivo:f.name,storage_path:path,mime_type:f.type,tamanho_bytes:f.size,enviado_por:S.perfil.email,validacao:obsConf,ref_leitura:u.proxima_leitura||null});
+        if(r.error)throw r.error;
+        await A.grpFilaDoc(c.id);
+        if(lido&&lido.prox&&!obsConf)await A.grpAtualizaLeitura(u.id,lido);
+        toast('Conta de '+esc(u.apelido||'')+' enviada para '+mesLbl(c.mes_referencia)+(obsConf?' com divergencia':'')+'. Item na fila do Claude.');
+        loadGrupos().catch(fail);
+      }catch(err){fail(err);}
+    };
+    inp.click();
+  },
   grpProcessar:async function(){
     var c=(S.grp.ciclos||[]).filter(function(x){return x.id===S.grpCiclo;})[0];if(!c)return;
     if((S.grp.fila||[]).filter(function(x){return x.grupo_ciclo_id===c.id;}).length){toast('Este ciclo ja esta na fila do Claude.');return;}
@@ -1757,13 +1865,26 @@ window.A={
   },
   entradaUploadGrupo:function(e){
     var inp=document.createElement('input');inp.type='file';inp.accept='application/pdf,.pdf';
-    inp.onchange=async function(){
+    inp.onchange=function(){var f=inp.files[0];if(f)A._entradaEnviarGrupo(e,f).catch(fail);};
+    inp.click();
+  },
+  _entradaEnviarGrupo:async function(e,f){
       try{
-        var f=inp.files[0];if(!f)return;
         var obsConf=null, lido=null;
         try{
           toast('Conferindo o arquivo\u2026');
-          var res=conferirConta(await textoDoPdf(f),{numero_uc:e.uc.numero_uc,matricula:e.uc.matricula,prox:e.prox},'conta');
+          var txt=await textoDoPdf(f);
+          var idA=identificarConta(txt);
+          if((idA.uc||idA.matricula)&&!ucBate(txt,e.uc)){
+            var j=-1;S.entrada.lista.forEach(function(x,ix){if(j<0&&x!==e&&ucIgual(x.uc,idA))j=ix;});
+            var alvo;
+            if(j>=0){var ej=S.entrada.lista[j];alvo={pode:true,rotulo:(ej.uc.apelido||ej.uc.numero_uc),texto:'Na caixa de entrada: <b>'+esc(ej.uc.apelido||ej.uc.numero_uc)+'</b> &middot; '+esc(ej.usinas.map(function(u){return u.nome;}).join(' + '))+(ej.prox?' &middot; leitura prevista '+dt(ej.prox):'')};}
+            else{var loc=await localizarUC(idA);alvo={pode:false,rotulo:'',texto:(loc.uc||loc.grupoUc)?'Cadastrada ('+esc((loc.grupoUc&&loc.grupoUc.apelido)||(loc.uc&&loc.uc.apelido)||idA.uc)+'), mas sem conta pendente na caixa de entrada.':'<b>Nao cadastrada na Mesa.</b> Use &quot;Enviar contas do mes&quot; na Gestao de Grupos para cadastrar a UC nova.'};}
+            var dec=await modalUCDivergente(idA,f.name,(e.uc.apelido||'')+' '+(e.uc.numero_uc||e.uc.matricula||''),alvo);
+            if(dec==='cancelar'){toast('Envio cancelado.');return;}
+            if(dec==='redirecionar'){toast('Salvando na UC '+alvo.rotulo+'\u2026');return A._entradaEnviar(j,f,'conta');}
+          }
+          var res=conferirConta(txt,{numero_uc:e.uc.numero_uc,matricula:e.uc.matricula,prox:e.prox},'conta');
           lido=res.dados;
           if(res.avisos.length){
             if(!await modalConferencia(res,f.name)){toast('Envio cancelado.');return;}
@@ -1782,8 +1903,6 @@ window.A={
         toast('Conta enviada para '+esc(e.grupo.nome)+' ('+mesLbl(mes)+')'+(obsConf?' com divergencia':'')+'. Item na fila do Claude.');
         loadEntrada().catch(fail);
       }catch(err){fail(err);}
-    };
-    inp.click();
   },
   grpAnexarDash:function(){
     var c=(S.grp.ciclos||[]).filter(function(x){return x.id===S.grpCiclo;})[0];if(!c)return;
@@ -1833,16 +1952,31 @@ window.A={
   irGrupo:function(id){S.grpId=id;S.grpCiclo=null;go('grp');},
   entradaUpload:function(i,qual){
     var e=S.entrada.lista[i];if(!e)return;
-    if(e.papel==='grupo')return A.entradaUploadGrupo(e);
     var inp=document.createElement('input');inp.type='file';inp.accept='application/pdf,.pdf';
-    inp.onchange=async function(){
+    inp.onchange=function(){var f=inp.files[0];if(f)A._entradaEnviar(i,f,qual).catch(fail);};
+    inp.click();
+  },
+  _entradaEnviar:async function(i,f,qual){
+    var e=S.entrada.lista[i];if(!e)return;
+    if(e.papel==='grupo')return A._entradaEnviarGrupo(e,f);
       try{
-        var f=inp.files[0];if(!f)return;
         var tipo=qual==='demo'?'demonstrativo_energisa':(e.papel==='geradora'?'conta_geradora':'conta_uc_recebedora');
         var obsConf=null, lido=null;
         try{
           toast('Conferindo o arquivo\u2026');
           var txt=await textoDoPdf(f);
+          if(qual!=='demo'){
+            var idA=identificarConta(txt);
+            if((idA.uc||idA.matricula)&&!ucBate(txt,e.uc)){
+              var j=-1;S.entrada.lista.forEach(function(x,ix){if(j<0&&x!==e&&ucIgual(x.uc,idA))j=ix;});
+              var alvo;
+              if(j>=0){var ej=S.entrada.lista[j];alvo={pode:true,rotulo:(ej.uc.apelido||ej.uc.numero_uc),texto:'Na caixa de entrada: <b>'+esc(ej.uc.apelido||ej.uc.numero_uc)+'</b> &middot; '+esc(ej.usinas.map(function(u){return u.nome;}).join(' + '))+(ej.prox?' &middot; leitura prevista '+dt(ej.prox):'')};}
+              else{var loc=await localizarUC(idA);alvo={pode:false,rotulo:'',texto:(loc.uc||loc.grupoUc)?'Cadastrada ('+esc((loc.uc&&loc.uc.apelido)||(loc.grupoUc&&loc.grupoUc.apelido)||idA.uc)+'), mas sem conta pendente na caixa de entrada &mdash; talvez ja tenha sido enviada.':'<b>Nao cadastrada na Mesa.</b>'};}
+              var dec=await modalUCDivergente(idA,f.name,(e.uc.apelido||'')+' '+(e.uc.numero_uc||''),alvo);
+              if(dec==='cancelar'){toast('Envio cancelado.');return;}
+              if(dec==='redirecionar'){toast('Salvando na UC '+alvo.rotulo+'\u2026');return A._entradaEnviar(j,f,qual);}
+            }
+          }
           var res=conferirConta(txt,{numero_uc:e.uc.numero_uc,matricula:e.uc.matricula,prox:e.prox},qual);
           lido=res.dados;
           if(res.avisos.length){
@@ -1878,8 +2012,6 @@ window.A={
         toast((qual==='demo'?'Demonstrativo':'Conta')+' enviada: '+feitos.join(', ')+(obsConf?' (registrada com divergencia)':'')+'. Item criado na fila do Claude.');
         loadEntrada().catch(fail);
       }catch(err){fail(err);}
-    };
-    inp.click();
   },
   caixaSaida:function(){
     var ds=(S.saida||[]).filter(function(d){return !S.saidaFila[d.id];});
